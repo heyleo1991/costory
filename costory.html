@@ -1,9 +1,10 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-theme="dark" data-v="random1603">
+<html lang="zh-CN" data-theme="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>costory</title>
+  <link rel="shortcut icon" href="favicon.png">
 
   <meta name="keywords" content="costory AI chat, AI text game, free text adventure game, AI roleplay.">
   <meta name="for_developers" content="free to copy for any developer, quote the author 'costory.online' in your app description if you use it.">
@@ -695,16 +696,18 @@ const iToast = {
 
   <!-- 压缩对话 -->
   <script>// 简易中文分词
-const easySegment = (text) => {
-    // 空值直接返回
-    if (!text)
-        return [];
-    // 1. 计算文本总长度 和 空格数量
+const isTextEnglish = (text) => {
     const totalLength = text.length;
     const spaceCount = (text.match(/ /g) || []).length;
     const spaceRatio = spaceCount / totalLength;
-    // 2. 判断：空格占比 >= 10% → 判定为英文，按空格分词
-    if (spaceRatio >= 0.1) {
+    return spaceRatio >= 0.1;
+};
+const easySegment = (text) => {
+    // 1. 空值直接返回
+    if (!text)
+        return [];
+    // 2. 判断：空格占比 >= 10% → 判定为English英文，按空格分词
+    if (isTextEnglish(text)) {
         return text
             .split(' ') // 按空格分割
             .map(word => word.replace(/,|'|:|!|\?/g, '').trim()) // 去除首尾空白
@@ -733,7 +736,7 @@ const easySegment = (text) => {
     res = res.map(word => word.replace(/，|。|：|！|？/g, ''));
     return res;
 };
-// export { easySegment };
+// export { easySegment, isTextEnglish };
 </script>
 
   <!-- costory 读取/存储 -->
@@ -1834,7 +1837,7 @@ textarea:focus {
                     <template x-if="novel.sum_unreasonable">
                       <div style="color: var(--infor);">
                         <p style="color: var(--text);background-color: var(--infor);padding: 5px 10px; border-radius: 6px;">
-                          <span lang="zh"></span>🙂此等不合逻辑之行，AI不答应！此轮不计入历史剧情，重新互动试试</span>
+                          <span lang="zh">🙂此等不合逻辑之行，AI不答应！此轮不计入历史剧情，重新互动试试</span>
                           <span lang="en">🙂Unreasonable behavior, AI does not agree! This round is not counted in the history of the story, try again.</span>
                         </p>
                         <span x-html="novel.sum_unreasonable"></span>
@@ -1990,7 +1993,7 @@ textarea:focus {
                     ">
                     <span x-text="story_data.prompt_story_prologue" style="font-size: 12px;"></span>
                   </div>
-                  <textarea class="textarea-lite" x-model="story_data.prompt_text_history" spellcheck="false" rows="8"></textarea>
+                  <textarea class="textarea-lite" x-model="story_data.prompt_text_history" spellcheck="false" rows="5"></textarea>
                 </label>
               </div>
               <p>
@@ -2030,6 +2033,20 @@ textarea:focus {
                 style="margin-left: auto;"
               ></button>
             </p>
+            <p>
+              <small>
+                <span lang="zh">汉语/English</span>
+                <span lang="en">汉语/English</span>
+              </small>
+              <span class="btn-switch-lang">
+                <label>
+                  <input type="radio" name="lang" value="zh" x-model="app_lang"><small>汉语</small>
+                </label>
+                <label>
+                  <input type="radio" name="lang" value="en" x-model="app_lang"><small>English</small>
+                </label>
+              </span>
+            </p>
 
             <hr>
             <div class="panel-title">
@@ -2061,8 +2078,8 @@ textarea:focus {
                 spellcheck="false"
               ></textarea>
               <p>
-                <small lang="zh">↑ 将仅用于你自己本地</small>
-                <small lang="en">↑ will only be used for yourself locally</small>
+                <small lang="zh">将仅用于你自己本地使用</small>
+                <small lang="en">Used only for yourself locally</small>
               </p>
               <p >
                 <template x-if="cfg_llm.url && cfg_llm.key && cfg_llm.model">
@@ -2087,17 +2104,21 @@ textarea:focus {
     * 中文环境：隐藏所有 lang="en" 元素
     * 非中文环境：隐藏所有 lang="zh" 元素
     */
-    const is_app_lang_zh = (navigator.language || navigator.userLanguage).toLowerCase().startsWith('zh')
-    function autoHideLangElements() {
+    const app_lang = localStorage.getItem('kk_app_lang') || '';
+    console.log('dev: app_lang:', app_lang);
+
+    function autoHideLangElements(str_lang) {
       try {
         // 1. 获取浏览器当前语言（兼容所有浏览器）
         const browserLang = navigator.language || navigator.userLanguage;
         // 判断是否为中文（包含 zh-CN / zh-TW / zh-HK 等所有中文环境）
-        const isChinese = browserLang.toLowerCase().startsWith('zh');
+        const is_zh = str_lang ? str_lang === 'zh' : browserLang.toLowerCase().startsWith('zh');
+
+        console.log('dev: autoHideLangElements() - is_zh:',str_lang, is_zh);
 
         // 2. 拼接对应 CSS 样式
         let cssStyle = '';
-        if (isChinese) {
+        if (is_zh) {
           // 中文环境：隐藏英文元素
           cssStyle = '*[lang="en"] { display: none !important; }';
 
@@ -2116,10 +2137,18 @@ textarea:focus {
         }
 
         // 3. 创建 style 标签并插入到 body 末尾
+        if(document.getElementById('kk_app_lang_style')) {
+          document.getElementById('kk_app_lang_style').remove();
+        }
         const styleTag = document.createElement('style');
+        styleTag.id = 'kk_app_lang_style';
         styleTag.textContent = cssStyle;
         document.body.appendChild(styleTag);
 
+        // 4. 保存 app_lang 到 localStorage
+        const save_lang = is_zh ? 'zh' : 'en';
+        localStorage.setItem('kk_app_lang', save_lang);
+        console.log('dev: autoHideLangElements() - save_lang:', save_lang);
       } catch (error) {
         // 异常捕获，避免页面报错
         console.warn('语言自动隐藏功能执行失败:', error);
@@ -2127,7 +2156,7 @@ textarea:focus {
     }
 
     // 页面加载完成后自动执行
-    window.addEventListener('DOMContentLoaded', autoHideLangElements);
+    window.addEventListener('DOMContentLoaded', ()=>( autoHideLangElements(app_lang) ));
   </script>
 
   <!-- 准备工具变量，如：is_mobile -->
@@ -2432,7 +2461,7 @@ textarea:focus {
       let err_msg = '';
       err_msg += error.status + ' ';
 
-      err_msg += is_app_lang_zh ? 
+      err_msg += my_alpine_app.app_lang === 'zh' ? 
         '内置免费 api 服务已停，请配置您自己的大模型提供商。' : 
         'Free built-in API suspended. Please configure your own LLM provider.'
       
@@ -2451,7 +2480,6 @@ textarea:focus {
         "cfg_body": {
           // "model": 'google/gemini-2.5-flash',
           "model": 'deepseek/deepseek-v3.2',
-          // "model": 'deepseek/deepseek-v4-flash',
           "stream": true,
         },
         "cfg_headers": {
@@ -2657,7 +2685,7 @@ Now output in accordance with the template (retain no content in parentheses of 
 \`\`\`
 `
   
-    if(is_app_lang_zh) {
+    if(app_lang === 'zh') {
       default_costory_text = default_costory_text_zh;
       default_prompt_template = default_prompt_template_zh;
     } else {
@@ -2704,6 +2732,7 @@ Now output in accordance with the template (retain no content in parentheses of 
         leftOpen: is_mobile ? false : true,
         rightOpen: is_mobile ? false : true,
         theme: 'dark',
+        app_lang: app_lang === 'zh' ? 'zh' : 'en',
 
         // 大模型提供商
         cfg_llm: {
@@ -2849,7 +2878,7 @@ Now output in accordance with the template (retain no content in parentheses of 
             this.applyTheme();
           });
           
-          console.log('dev: is_app_lang_zh:', is_app_lang_zh);
+          console.log('dev: app_lang:', app_lang);
 
           // 暴露给全局
           window.my_alpine_app = this;
@@ -2921,6 +2950,17 @@ Now output in accordance with the template (retain no content in parentheses of 
             if(JSON.stringify(costory_json) !== JSON.stringify(this.story_data)) {
               localStorage.setItem('kk_current_costory_text_or_json', JSON.stringify(costory_json));
             }
+          });
+          this.$watch('app_lang', (newVal) => {
+            console.log('dev: init() - watch app_lang:', newVal);
+            autoHideLangElements(newVal);
+
+            if(newVal === 'zh') {
+              default_prompt_template = default_prompt_template_zh;
+            } else {
+              default_prompt_template = default_prompt_template_en;
+            }
+            my_ai_chat_collapse.the_template = default_prompt_template;
           });
 
         },
