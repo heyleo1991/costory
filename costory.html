@@ -51,6 +51,11 @@ function kk_ai_chat_easy(the_init_obj) {
                 text: '',
             },
         },
+        // 强行终止读取stream数据流的标记
+        mark_stop_stream: false,
+        stopStream() {
+            obj.mark_stop_stream = true;
+        },
         async fetchStream(post_body, post_url, post_header, fn_callbackOnChunk, fn_callbackOnDone, fn_callbackOnError) {
             if (!post_body && obj.store_char_chat.chat_form.text.trim() === '') {
                 throw new Error(`Hello, both post_body and input text, are empty.`);
@@ -164,9 +169,10 @@ function kk_ai_chat_easy(the_init_obj) {
                         obj.uiScrollToBottom();
                         // done
                         is_loop_should_done = is_done;
-                        if (is_loop_should_done) {
+                        if (is_loop_should_done || obj.mark_stop_stream) {
                             console.log('dev:text_all: ' + text_all);
                             obj.store_char_chat.status_streaming = false;
+                            obj.mark_stop_stream = false;
                             // 结束时，获取 token_usage
                             console.log('dev:text_mini: ' + text_mini);
                             const pattern_usage = /"completion_tokens":\s*"((?:\\.|[^"\\])*)"/g;
@@ -1279,6 +1285,9 @@ const arr_keywords_emotion = [
 .tip-dev {
   color: var(--accent);
 }
+.tip-muted {
+  color: var(--text-muted);
+}
 
 *, *::before, *::after { box-sizing: border-box; }
 html, body {
@@ -1483,7 +1492,7 @@ ul.char-block strong{
   padding: 12px 14px 16px;
   position: sticky;
   bottom: 0;
-  background-color: var(--bg-panel);
+  background-color: var(--bg-elevated);
   border-top-left-radius: 15px;
   border-top-right-radius: 15px;
 }
@@ -1900,8 +1909,13 @@ textarea:focus {
 
           <footer class="composer">
             <div class="composer-inner">
+              <template x-if="!cfg_llm.url || !cfg_llm.key || !cfg_llm.model">
+                <p class="tip-muted" style="text-align: right;">
+                  <small lang="zh">如果内置 api 无法使用，请配置你的大模型提供商。</small>
+                  <small lang="en">If the built-in api is not available, configure your llm provider.</small>
+                </p>
+              </template>
               <div style="display: flex;">
-
                 <input 
                   type="text" 
                   x-model="chat_form.name" 
@@ -2059,7 +2073,7 @@ textarea:focus {
               <textarea 
                 class="textarea-lite" 
                 x-model.trim="cfg_llm.url" 
-                placeholder="api_url，eg.: https://openrouter.ai/api/v1/chat/completions" 
+                placeholder="api_url，eg.: https://openrouter.ai/api/v1/" 
                 rows="3"
                 spellcheck="false"
               ></textarea>
@@ -2080,14 +2094,6 @@ textarea:focus {
               <p>
                 <small lang="zh">将仅用于你自己本地使用</small>
                 <small lang="en">Used only for yourself locally</small>
-              </p>
-              <p >
-                <template x-if="cfg_llm.url && cfg_llm.key && cfg_llm.model">
-                  <small>
-                    <span lang="zh">配置完毕，将使用此大模型提供商</span>
-                    <span lang="en">Done. LLM provider will work.</span>
-                  </small>
-                </template>
               </p>
             </p>
 
@@ -2405,7 +2411,7 @@ textarea:focus {
   <!-- whenStreamDone 流式输出完成时回调函数 -->
   <script>
     // 标记单次会话是否自动重新发送剧情
-    let mark_auto_resend = false;
+    let mark_auto_resend = 0;
     function whenStreamDone(chunk_obj) {
 
       let res_json = parseMarkdownToJson(chunk_obj.text_all, cfg_game_markdown_to_json);
@@ -2418,19 +2424,23 @@ textarea:focus {
       }
 
       // 判断新剧情顺利生成否
-      if(!res_json?.sum && !mark_auto_resend){
+      if(!res_json?.sum && mark_auto_resend <= 3){
         my_ai_chat_easy.rollbackLastChat();
+        console.log('dev: whenStreamDone() - empty sum - res_json:');
+        console.log(res_json);
         setTimeout(() => {
           console.log('auto - resend')
           my_alpine_app.sendMsg();
+          mark_auto_resend += 1;
         }, 100);
       }
 
       // 追加新剧情到历史剧情
       let text_append = '';
       const prompt_text_user_submit = my_alpine_app.story_data.prompt_text_user_submit;
+      const sum = res_json?.sum?.trim() || '';
       text_append += `${my_alpine_app.story_data.prompt_text_history ? '\n' : ''}\n---\n${prompt_text_user_submit}\n=> ${res_json?.sum?.trim()}`
-      if (!text_append) {
+      if (!sum) {
         my_ai_chat_easy.rollbackLastChat();
         return;
       }
@@ -2448,7 +2458,7 @@ textarea:focus {
       target_chat_obj_item.arr_content[0].text = parseWordsHighlight(target_chat_obj_item.arr_content[0].text)
 
       // 重置自动重新发送剧情标记
-      mark_auto_resend = false;
+      mark_auto_resend = 0;
     }
   </script>
 
@@ -2574,7 +2584,8 @@ World of Genshin Impact
 {{...prompt_text_user_submit}}
 
 合“编剧风格”，优选最适角色回应互动（默认1角色出场，小概率适合精彩多人剧情是可多角色），
-现在按模板输出（标题括号内容无需保留，遇到“<$>”则回答完毕并立即终止输出）
+标题括号内容无需保留，遇到“<$>”则回答完毕并立即终止输出，
+现在按模板输出：
 
 \`\`\`
 ## 1、提交概括 >>>
@@ -2650,7 +2661,8 @@ The above content shall not be included in the "interactive plot summary".
 {{...prompt_text_user_submit}}
 
 Conform to the "screenwriting style", and select the most suitable character to respond to the interaction (one character appears by default; multiple characters are allowed for wonderful plots on rare occasions).
-Now output in accordance with the template (retain no content in parentheses of titles; end the response immediately and stop output once "<$>" appears).
+retain no content in parentheses of titles, end the response immediately and stop output once "<$>" appears,
+Now, return the text according to the agreed template format:
 
 \`\`\`
 ## 1. Submission Overview >>>
