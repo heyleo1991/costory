@@ -1,0 +1,874 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>costory</title>
+  <link rel="shortcut icon" href="favicon.png">
+  <style>
+    :root {
+      --bg: #0b0d12;
+      --panel: #111522;
+      --panel-2: #171c2b;
+      --text: #bcc5da;
+      --muted: #7d869e;
+      --brand: #6aa5ff;
+      --brand-soft: rgba(106, 165, 255, 0.14);
+      --line: rgba(255, 255, 255, 0.08);
+      --radius: 14px;
+      --shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      margin: 0;
+      min-height: 100%;
+      background:
+        radial-gradient(circle at 0% 0%, rgba(106, 165, 255, 0.10), transparent 40%),
+        radial-gradient(circle at 100% 100%, rgba(88, 143, 245, 0.08), transparent 35%),
+        var(--bg);
+      color: var(--text);
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      line-height: 1.65;
+    }
+
+    .shell {
+      max-width: 980px;
+      padding: 15px;
+      padding-bottom: 30px;
+      margin: 0 auto;
+    }
+
+    .topbar {
+      position: sticky;
+      top: 12px;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      background: rgba(11, 14, 22, 0.78);
+      backdrop-filter: blur(8px);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 10px;
+      box-shadow: var(--shadow);
+      margin: 0 -8px;
+    }
+
+    .toolsbar {
+      height: 30px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
+      padding: 0 2px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .community-links {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .community-links a {
+      color: var(--muted);
+      text-decoration: none;
+      transition: color 0.2s ease;
+    }
+
+    .community-links a:hover {
+      color: var(--text);
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+
+    .brand {
+      display: flex;
+      flex-direction: column;
+      padding: 0 8px;
+      min-width: 180px;
+    }
+
+    .brand b {
+      font-size: 16px;
+      letter-spacing: 0.3px;
+    }
+
+    .brand small {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: end;
+      flex: 1;
+    }
+
+    .nav-btn,
+    .lang-btn {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: transparent;
+      color: var(--text);
+      font-size: 14px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .nav-btn {
+      padding: 8px 12px;
+    }
+    .lang-btn {
+      padding: 5px 8px;
+    }
+
+    .nav-btn:hover,
+    .lang-btn:hover {
+      border-color: rgba(106, 165, 255, 0.48);
+      background: var(--brand-soft);
+    }
+
+    .nav-btn.active {
+      background: linear-gradient(180deg, rgba(106, 165, 255, 0.24), rgba(106, 165, 255, 0.12));
+      border-color: rgba(106, 165, 255, 0.65);
+      color: #f2f7ff;
+    }
+
+    .lang {
+      display: inline-flex;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+
+    .lang-btn {
+      border: 0;
+      border-radius: 0;
+      min-width: 48px;
+    }
+
+    .lang-btn.active {
+      background: var(--panel-2);
+      color: #fff;
+    }
+
+    .card {
+      margin-top: 16px;
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0.01));
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 24px;
+      box-shadow: var(--shadow);
+    }
+
+    .page {
+      display: none;
+    }
+
+    .page.active {
+      display: block;
+    }
+
+    h1 {
+      margin: 0 0 14px;
+      font-size: 30px;
+      letter-spacing: 0.2px;
+    }
+
+    h2 {
+      margin: 26px 0 12px;
+      font-size: 19px;
+    }
+
+    p {
+      margin: 8px 0;
+      color: var(--text);
+    }
+
+    .muted {
+      color: var(--muted);
+    }
+
+    .list {
+      margin: 10px 0 0;
+      padding-left: 20px;
+    }
+
+    .list li {
+      margin: 4px 0;
+      color: var(--text);
+    }
+
+    .kbd {
+      display: inline-block;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-bottom-width: 2px;
+      border-radius: 7px;
+      padding: 0 6px;
+      font-family: Consolas, Menlo, monospace;
+      font-size: 12px;
+      color: #d3ddf9;
+      background: rgba(255, 255, 255, 0.04);
+      margin: 0 3px;
+    }
+
+    .codebox {
+      margin-top: 14px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      background: #0b1020;
+      border-radius: 12px;
+      padding: 14px;
+      overflow-x: auto;
+      font-family: Consolas, Menlo, monospace;
+      font-size: 13px;
+      color: #dce6ff;
+      white-space: break-spaces;
+    }
+
+    hr {
+      margin-top: 30px;
+      margin-bottom: 15px;
+      border-left: none;
+      border-right: none;
+      border-bottom: none;
+      border-top: 1px solid var(--line);
+    }
+
+    .list-game {
+      margin-top: 14px;
+    }
+
+    .list-game-card {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 24px;
+      align-items: stretch;
+    }
+
+    .game-card{
+      margin: 0;
+      max-height: 400px;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 14px;
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0.01));
+      color: var(--text);
+      font-family: Consolas, Menlo, monospace;
+      font-size: 12px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      word-break: break-word;
+      box-shadow: var(--shadow);
+      margin: 5px 0;
+    }
+
+    .game-card:hover {
+      border-color: rgba(106, 165, 255, 0.42);
+      background: linear-gradient(180deg, rgba(106, 165, 255, 0.12), rgba(106, 165, 255, 0.04));
+    }
+    .game-card::-webkit-scrollbar {
+      display: none;
+    }
+
+    .btn-game {
+      margin: 5px 0;
+      padding: 8px 12px;
+      border: 1px solid rgba(106, 165, 255, 0.42);
+      background: linear-gradient(180deg, rgba(106, 165, 255, 0.12), rgba(106, 165, 255, 0.04));
+      border-radius: 8px;
+      color: var(--text);
+      cursor: pointer;
+      transition: all 0.2s ease;
+      float: right;
+    }
+    .btn-game:hover {
+      background: var(--bg-elevated);
+      color: var(--accent);
+    }
+
+    @media (max-width: 760px) {
+      .toolsbar {
+        gap: 8px;
+      }
+
+      .topbar {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .brand {
+        min-width: auto;
+      }
+
+      .nav {
+        justify-content: flex-start;
+      }
+
+      .list-game-card {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+
+    <div class="toolsbar" aria-label="community and language tools">
+      <div class="community-links">
+        <a href="https://github.com/heyleo1991/costory" target="_blank" rel="noopener noreferrer">GitHub</a>
+        <a href="https://www.reddit.com" target="_blank" rel="noopener noreferrer">Reddit</a>
+      </div>
+      <div class="lang" aria-label="language switch">
+        <button class="lang-btn" data-lang="zh">中</button>
+        <button class="lang-btn" data-lang="en">EN</button>
+      </div>
+    </div>
+
+    <header class="topbar">
+      <div class="brand">
+        <h1 style="display: inline-block;font-size: 16px;margin: 0;">costory</h1>
+        <small>
+          <span lang="zh">基于 markdown 的 AI 剧本格式规范</span>
+          <span lang="en">A markdown-based AI story format specification</span>
+        </small>
+      </div>
+
+      <nav class="nav">
+        <button class="nav-btn active" data-page="intro">
+          <span lang="zh">介绍</span>
+          <span lang="en">Introduction</span>
+        </button>
+        <button class="nav-btn" data-page="format">
+          <span lang="zh">具体格式</span>
+          <span lang="en">Format</span>
+        </button>
+        <button class="nav-btn" data-page="example">
+          <span lang="zh">🎮 游戏演示</span>
+          <span lang="en">🎮 Game Demo</span>
+        </button>
+      </nav>
+    </header>
+
+    <main class="card">
+      <section class="page active" id="page-intro">
+
+        <div style="text-align: center;">
+          <img src="./assets/costory_image.png" style="max-width: 130px;">
+        </div>
+
+        <div lang="zh">
+          <h1>costory 是什么？</h1>
+          <p>costory 是一种完全基于 Markdown 的故事剧本格式，目标是让人类创作者与 AI 都能快速理解和创作剧情。</p>
+          <p>它将经典提示词从 <span class="kbd">{{char}}</span>/<span class="kbd">{{user}}</span> 的对话视角，迁移到<span class="kbd">“编剧”</span>视角，编剧可以自由创建角色、迁移场景、推动叙事结构。</p>
+          <h2>核心价值</h2>
+          <ul class="list">
+            <li>可读性高：文本即剧本，创作者不必先理解复杂 JSON。</li>
+            <li>结构稳定：通过锁定关键标题，程序可一致性解析。</li>
+            <li>创作自由：支持玩家切换角色与互动视角，推进故事。</li>
+          </ul>
+        </div>
+        <div lang="en">
+          <h1>What is Costory?</h1>
+          <p>costory is a Markdown-based story script format designed for both human creators and AI to write and run narrative experiences.</p>
+          <p>Instead of the classic <span class="kbd">{{char}}</span>/<span class="kbd">{{user}}</span> prompt perspective, costory promotes a <span class="kbd">"writer"</span> perspective: the writer can create characters, shift scenes, and direct story progression.</p>
+          <h2>Why it matters</h2>
+          <ul class="list">
+            <li>Readable by default: plain text first, structured data second.</li>
+            <li>Reliable parsing: fixed headings make scripts portable.</li>
+            <li>Flexible storytelling: role switching and scene migration are natural.</li>
+          </ul>
+        </div>
+
+        <hr>
+
+        <div lang="zh">
+          <h1>costory 适合什么？</h1>
+          <p>costory 的背景设定更适合游戏、动漫、小说、影视作品的世界观平移和角色扮演。</p>
+          <p>快速指定一个背景设定，玩家与 AI 共同推动剧情。</p>
+          <p>玩家可以切换成任意角色，包括 AI 驱动的角色。</p>
+          <p>祝你玩得愉快！</p>
+        </div>
+        <div lang="en">
+          <h1>What is Costory Suitable for?</h1>
+          <p>The background setting of costory is more suitable for world-building and role-playing of games, anime, novels, and movies.</p>
+          <p>Quickly specify a background setting, and the player and AI push the story forward together.</p>
+          <p>The player could switch to any role, including AI-driven roles.</p>
+          <p>Have fun!</p>
+        </div>
+
+        <hr>
+
+        <div lang="zh">
+          <h1>示例</h1>
+          <p>下面是一个 costory 1.0 的简化示例，展示如何以二级标题组织可解析的剧情字段：</p>
+          <div class="codebox"># costory 1.0 >>>
+more: https://costory.online
+此文档设定了故事背景与编剧风格，可被支持 costory 的程序载入。
+
+## _背景设定_ >>>
+西游记平行世界，沿用原作世界观与人物。
+
+## _编剧风格_ >>>
+古典小说文风，剧情偏悬疑与诡计。
+
+## _序幕引言_ >>>
+站在悟空面前的，是一位来自异世的访客。
+
+## _玩家名称_ >>>
+悟空
+
+## _玩家描述_ >>>
+
+</div>
+          <p class="muted">推荐后缀：.costory.txt / .costory.md</p>
+        </div>
+        <div lang="en">
+          <h1>Example</h1>
+          <p>Here is a simplified costory 1.0 sample showing how second-level headings define parseable story fields:</p>
+          <div class="codebox"># costory 1.0 >>>
+more: https://costory.online
+This file defines the world and writer style for a playable AI story.
+
+## _background_setting_ >>>
+A parallel Journey to the West universe with familiar lore and cast.
+
+## _writer_style_ >>>
+Classical prose with suspense, deception, and layered plots.
+
+## _prologue_leadin_ >>>
+Before Wukong stands a visitor from another world.
+
+## _player_name_ >>>
+Wukong
+
+## _player_desc_ >>>
+
+</div>
+          <p class="muted">Recommended extension: .costory.txt / .costory.md</p>
+        </div>
+      </section>
+      <section class="page" id="page-format">
+        <div lang="zh">
+          <h1>costory 具体格式</h1>
+          <p>costory 通过固定的二级标题关键字组织内容，并最终映射为英文 key 的 JSON 对象。</p>
+          <h2>识别规则</h2>
+          <ul class="list">
+            <li>仅二级标题（<span class="kbd">## </span>）参与 key-value 识别。</li>
+            <li>标题匹配中文或英文关键字都视为命中。</li>
+            <li>程序统一按英文关键字组织结构化数据。</li>
+          </ul>
+          <h2>剧本核心关键字（1.0）</h2>
+          <ul class="list">
+            <li>_背景设定_ / _background_setting_</li>
+            <li>_编剧风格_ / _writer_style_</li>
+            <li>_序幕引言_ / _prologue_leadin_</li>
+            <li>_玩家名称_ / _player_name_</li>
+            <li>_玩家描述_ / _player_desc_</li>
+            <!-- <li>_可选开场_ / _optional_opening_</li> -->
+            <!-- <li>_结局条件_ / _ending_option_</li> -->
+          </ul>
+          <h2>剧本介绍关键字（1.0）</h2>
+          <ul class="list">
+            <li>_故事名称_ / _story_name_</li>
+            <li>_故事介绍_ / _story_intro_</li>
+            <li>_故事标签_ / _story_tag_</li>
+            <li>_作者名称_ / _author_name_</li>
+            <li>_作者邮箱_ / _author_email_</li>
+            <li>_作者链接_ / _author_link_</li>
+            <li>_作者介绍_ / _author_intro_</li>
+            <li>_托管方名称_ / _keeper_name_</li>
+            <li>_托管方邮箱_ / _keeper_email_</li>
+            <li>_托管方介绍_ / _keeper_intro_</li>
+            <li>_托管方链接_ / _keeper_link_</li>
+          </ul>
+        </div>
+        <div lang="en">
+          <h1>costory Format Details</h1>
+          <p>costory uses fixed second-level headings and maps matched fields into English keys for JSON output.</p>
+          <h2>Parsing rules</h2>
+          <ul class="list">
+            <li>Only second-level headings (<span class="kbd">## </span>) are recognized as key-value fields.</li>
+            <li>Either Chinese or English keyword match is valid.</li>
+            <li>Data is normalized into English keys in the final object.</li>
+          </ul>
+          <h2>Core script keys (1.0)</h2>
+          <ul class="list">
+            <li>_background_setting_ / _背景设定_</li>
+            <li>_writer_style_ / _编剧风格_</li>
+            <li>_prologue_leadin_ / _序幕引言_</li>
+            <li>_player_name_ / _玩家名称_</li>
+            <li>_player_desc_ / _玩家描述_</li>
+            <!-- <li>_optional_opening_ / _可选开场_</li> -->
+            <!-- <li>_ending_option_ / _结局条件_</li> -->
+          </ul>
+          <h2>Story metadata keys (1.0)</h2>
+          <ul class="list">
+            <li>_story_name_ / _故事名称_</li>
+            <li>_story_intro_ / _故事介绍_</li>
+            <li>_story_tag_ / _故事标签_</li>
+            <li>_author_name_ / _作者名称_</li>
+            <li>_author_email_ / _作者邮箱_</li>
+            <li>_author_link_ / _作者链接_</li>
+            <li>_author_intro_ / _作者介绍_</li>
+            <li>_keeper_name_ / _托管方名称_</li>
+            <li>_keeper_email_ / _托管方邮箱_</li>
+            <li>_keeper_intro_ / _托管方介绍_</li>
+            <li>_keeper_link_ / _托管方链接_</li>
+          </ul>
+        </div>
+      </section>
+      <section class="page" id="page-example">
+
+        <div class="list-game">
+          <div>
+            <div class="list-game-card">
+
+              <div class="game-card-box">
+                <div lang="zh">
+                  <small>黑神话悟空-召唤空间</small>
+                  <pre class="game-card"># costory 1.0 >>>
+          
+## _背景设定_ >>>
+游戏《黑神话悟空》平行世界，沿用其世界环境、信息、角色。
+黑暗的虚空中，天命人可以召唤任何游戏内的角色，召唤游戏以外的角色则不合逻辑。
+此空间角色在更高维度，角色一旦召唤苏醒，将立刻理解前尘往事、游戏剧情、天命人、甚至自己是通过某种技术来显化自身意志。
+- 《黑神话悟空》中的角色能够意识到这黑暗的虚空环境绑定了游戏世界，环境相性相融，环境可以被幻化成他们喜爱的环境。
+召唤出的角色完全保持原人物的性格、气质、谈吐风格，他们自知不是本人实体，而意志为真，故而也是真正的本人。
+
+## _编剧风格_ >>>
+体现佛教与道教风格。
+
+## _序幕引言_ >>>
+“按你心意，唤出你脑海中的那人的名字。”空旷黑暗的虚空以意志化为声音。
+
+
+## _玩家名称_ >>>
+天命人
+
+## _玩家描述_ >>>
+
+
+## _故事名称_ >>>
+黑神话悟空-召唤空间
+                  </pre>
+                  <button class="btn-game">🎮 开始游戏</button>
+                </div>
+                <div lang="en">
+                  <small>Black Myth: Wukong - Summoning Space</small>
+                  <pre class="game-card"># costory 1.0 >>>
+
+## _background_setting_ >>>
+A parallel world of the game *Black Myth: Wukong*, inheriting its global environment, lore and characters.
+Within the dark void, The Destined One may summon any character from the game. Summoning characters outside the
+game’s scope is illogical.
+All beings in this realm exist on a higher dimensional plane. Upon being summoned and awakened, they shall instantly
+comprehend past events, the game’s storyline, The Destined One, and even the truth that their will is manifested
+through a special form of power.
+- Characters from *Black Myth: Wukong* recognize that this dark void is intrinsically bound to their original world with
+harmonious environmental affinity. The void may be reshaped into landscapes they favor through illusion.
+Summoned characters fully retain their original personalities, demeanors and speech styles. They are aware they possess
+no physical flesh, yet their will is authentic—making them genuine incarnations of themselves.
+
+## _writer_style_ >>>
+Blends Buddhist and Taoist aesthetics and thematic undertones.
+
+## _prologue_leadin_ >>>
+“Speak the name of the one in your mind, as your heart desires.” A voice forged from will echoes across the empty,
+boundless void.
+
+## _player_name_ >>>
+The Destined One
+
+## _player_desc_ >>>
+
+## _story_name_ >>>
+Black Myth: Wukong - Summoning Realm
+                  </pre>
+                  <button class="btn-game">🎮 Start Game</button>
+                </div>
+              </div>
+
+              <div class="game-card-box">
+                <div lang="zh">
+                  <small>原神-召唤空间</small>                
+                  <pre class="game-card"># costory 1.0 >>>
+    
+## _背景设定_ >>>
+游戏《原神》平行世界，沿用其世界环境、信息、角色。
+温柔的虚空中，天命人可以召唤任何游戏内的角色，召唤游戏以外的角色则不合逻辑。
+此空间角色在更高维度，角色一旦召唤苏醒，将立刻理解前尘往事、游戏剧情、旅行者、甚至自己是通过某种技术来显化自身意志。
+- 《原神》中的角色能够意识到这温柔的虚空环境绑定了游戏世界，环境相性相融，环境可以被幻化成他们喜爱的环境。
+召唤出的角色完全保持原人物的性格、气质、谈吐风格，他们自知不是本人实体，而意志为真，故而也是真正的本人。
+
+## _编剧风格_ >>>
+奇幻幻想故事文风。
+
+## _序幕引言_ >>>
+“按你心意，唤出你脑海中的那人的名字。”空旷温柔的虚空以意志化为声音。
+
+
+## _玩家名称_ >>>
+旅行者
+
+## _玩家描述_ >>>
+
+
+## _故事名称_ >>>
+元神-召唤空间
+                      
+                  </pre>
+                  <button class="btn-game">🎮 开始游戏</button>
+                </div>
+                <div lang="en">
+                  <small>Genshin Impact - Summoning Space</small>
+                  <pre class="game-card"># costory 1.0 >>>
+
+## _background_setting_ >>>
+A parallel universe of the game *Genshin Impact*, retaining its world setting, lore and characters.
+Within the gentle void, the Chosen One may summon any in-game character; summoning characters outside the game’s scope is illogical.
+Characters in this realm exist on a higher dimensional plane. Once summoned and awakened, they instantly comprehend past memories, the game’s storyline, the Traveler, and even the truth that their will is manifested through a special form of technology.
+
+- All *Genshin Impact* characters recognize that this gentle void is inherently linked to their original game world with perfect environmental compatibility. The void can be reshaped into any scenery they favor.
+Summoned characters fully retain their original personalities, temperaments and speaking styles. They understand they possess no physical form, yet their will is authentic—making them genuine incarnations of themselves.
+
+## _writer_style_ >>>
+Fantasy and whimsical narrative tone.
+
+## _prologue_leadin_ >>>
+"Speak the name of the one you hold in your mind, as your heart desires." A voice forged from will echoes across the vast, tender void.
+
+## _player_name_ >>>
+Traveler
+
+## _player_desc_ >>>
+
+## _story_name_ >>>
+Genshin - Summoning Realm
+                  </pre>
+                  <button class="btn-game">🎮 Start Game</button>
+                </div>
+              </div>
+
+              <div class="game-card-box">
+                <div lang="zh">
+                  <small>红楼梦-小厮茗烟的一天</small>
+                  <pre class="game-card"># costory 1.0 >>>
+    
+## _背景设定_ >>>
+古典小说《红楼梦》平行世界，沿用其世界环境、信息、角色。
+
+
+## _编剧风格_ >>>
+古典小说文风。
+
+## _序幕引言_ >>>
+宝玉醒来不为别的，先把茗烟叫来跟前：“好茗烟！再偷偷去外面集上，弄点新巧的书籍玩意带了来吧。又近中秋了，林妹妹和老太太也腻腻的，不如咱们淘些新奇的来”
+
+
+## _玩家名称_ >>>
+茗烟
+
+## _玩家描述_ >>>
+
+
+## _故事名称_ >>>
+红楼梦-小厮茗烟的一天
+                  </pre>
+                  <button class="btn-game">🎮 开始游戏</button>
+                </div>
+                <div lang="en">
+                  <small>A Dream of Red Mansions: A Day in the Life of Servant Boy Mingyan</small>
+                  <pre class="game-card"># costory 1.0 >>>
+
+## _background_setting_ >>>
+A parallel world of the classic novel *A Dream of Red Mansions*, retaining its original world backdrop, lore and
+characters.
+
+## _writer_style_ >>>
+Classical literary prose style.
+
+## _prologue_leadin_ >>>
+As Baoyu roused from sleep, his first thought was to summon Mingyan to his side.
+"Good Mingyan, slip quietly to the town market once more and fetch some new, curious books and trinkets. The Mid-Autumn
+Festival draws near. Miss Lin and the Old Matriarch grow weary of the same old days. Let us seek out some novel
+diversions instead."
+
+## _player_name_ >>>
+Mingyan
+
+## _player_desc_ >>>
+
+
+## _story_name_ >>>
+A Dream of Red Mansions: A Day in the Life of Servant Boy Mingyan
+                  </pre>
+                  <button class="btn-game">🎮 Start Game</button>
+                </div>
+              </div>
+
+              <div class="game-card-box">
+                <div lang="zh">
+                  <small>哈利波特-邓布利多在校长室的闲谈</small>              
+                  <pre class="game-card"># costory 1.0 >>>
+    
+## _背景设定_ >>>
+奇幻小说《哈利波特》平行世界，沿用其世界环境、信息、角色。
+角色“罗琳”是现实世界中的小说作者化身的女教师形象，她的目的是来到自己小说的世界解小说人物，提升创作灵感。
+
+
+## _编剧风格_ >>>
+奇幻小说文风。
+
+## _序幕引言_ >>>
+新学生走后，邓布利多回到校长办公室，他和分院帽开始了对话。
+办公室里，一位叫“罗琳”的历史女教师前来应聘，分院帽
+
+## _玩家名称_ >>>
+邓布利多
+
+## _玩家描述_ >>>
+
+
+## _故事名称_ >>>
+哈利波特-邓布利多在校长室的闲谈
+                  </pre>
+                  <button class="btn-game">🎮 开始游戏</button>
+                </div>
+                <div lang="en">
+                  <small>Harry Potter - Dumbledore’s Casual Talk in the Headmaster’s Office</small>
+                  <pre class="game-card"># costory 1.0 >>>
+
+## _background_setting_ >>>
+A parallel universe of the fantasy novel *Harry Potter*, retaining its world setting, lore and characters.
+The character "Rowling" appears as a female teacher who is the incarnation of the novel’s real-world author. She enters
+the world of her own work to rescue its characters and gain creative inspiration.
+
+## _writer_style_ >>>
+Fantasy literary tone.
+
+## _prologue_leadin_ >>>
+After the new students depart, Dumbledore returns to the Headmaster’s Office and strikes up a conversation with the
+Sorting Hat.
+Inside the office, a female History teacher named "Rowling" arrives to apply for a teaching position, while the Sorting
+Hat...
+
+## _player_name_ >>>
+Dumbledore
+
+## _player_desc_ >>>
+
+## _story_name_ >>>
+Harry Potter - Dumbledore’s Casual Talk in the Headmaster’s Office
+                  </pre>
+                  <button class="btn-game">🎮 Start Game</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <br>
+      <div>
+        <p lang="zh">
+          <small>
+            演示程序已在 github 开源，目前代码比较乱（inline-html），作者 Leo-K 将进一步整理工具库后持续更新到此处。
+          </small>
+        </p>
+        <p lang="en">
+          <small>
+            The demo program has been open source on github, and the code is currently messy (inline-html). Author Leo-K will keep on updating the toolkit here.
+          </small>
+        </p>
+      </div>
+      <small>Copyright © costory.online. All rights reserved.</small>
+    </footer>
+  </div>
+
+  <script>
+    (function () {
+      var STORAGE_KEY = "costory_lang";
+      var pageButtons = document.querySelectorAll(".nav-btn");
+      var pageBlocks = document.querySelectorAll(".page");
+      var langButtons = document.querySelectorAll(".lang-btn");
+
+      function getInitialLanguage() {
+        var cached = localStorage.getItem(STORAGE_KEY);
+        if (cached === "zh" || cached === "en") {
+          return cached;
+        }
+        var locale = (navigator.language || "").toLowerCase();
+        return locale.indexOf("zh") === 0 ? "zh" : "en";
+      }
+
+      function setLanguage(lang) {
+        document.documentElement.lang = lang;
+        localStorage.setItem(STORAGE_KEY, lang);
+        document.querySelectorAll("[lang]").forEach(function (node) {
+          if (node === document.documentElement) {
+            return;
+          }
+          node.hidden = node.getAttribute("lang") !== lang;
+        });
+
+        langButtons.forEach(function (btn) {
+          btn.classList.toggle("active", btn.dataset.lang === lang);
+        });
+      }
+
+      function switchPage(target) {
+        pageButtons.forEach(function (btn) {
+          btn.classList.toggle("active", btn.dataset.page === target);
+        });
+        pageBlocks.forEach(function (block) {
+          block.classList.toggle("active", block.id === "page-" + target);
+        });
+      }
+
+      pageButtons.forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          switchPage(btn.dataset.page);
+        });
+      });
+
+      langButtons.forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          setLanguage(btn.dataset.lang);
+        });
+      });
+
+      setLanguage(getInitialLanguage());
+      switchPage("intro");
+
+      // game btn:
+      var btnGames = document.querySelectorAll(".btn-game");
+      btnGames.forEach(function (btn) {
+        btn.addEventListener("click", function (event) {
+          console.log(event.target);
+          //TODO: 逐级向上找含有 pre 元素的父元素，找到后获取 pre 元素的内容
+          var pre = event.target.closest("[lang]").querySelector("pre");
+          if (pre) {
+            
+            const costory_text = pre.innerText.trim();
+            localStorage.setItem("kk_current_costory_text_or_json", costory_text);
+
+            window.location.href = "costory.html";
+          }
+        });
+      });
+    })();
+  </script>
+</body>
+</html>

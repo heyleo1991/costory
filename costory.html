@@ -1,0 +1,2946 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>costory</title>
+
+  <link rel="shortcut icon" href="favicon.png">
+
+  <meta name="keywords" content="costory AI chat, AI text game, free text adventure game, AI roleplay.">
+  <meta name="for_developers" content="free to copy for any developer, quote the author 'costory.online' in your app description if you use it.">
+
+
+  <script>// 2026-04-09 
+// kk_ai_chat_easy：通过传入api配置，直接获取一个 ai chat 对象。
+// tool-fn-01 - jwtSign 方法：独立方法，可以用来生成JWT签名。（智谱AI 需要的请求头中的 Authorization 字段）
+const jwtSign = async function (secret, payload, my_header) {
+    const header = my_header || { alg: 'HS256', sign_type: 'SIGN' };
+    const encodedHeader = btoa(JSON.stringify(header));
+    const encodedPayload = btoa(JSON.stringify(payload));
+    if (!secret) {
+        console.log('secret is empty, returned.');
+        return;
+    }
+    // load secret
+    const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: { name: 'SHA-256' } }, false, ['sign']);
+    // sing
+    const signature = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(encodedHeader + '.' + encodedPayload));
+    // ArrayBuffer to Base64 
+    //const encodedSignature = btoa(String.fromCharCode.apply(null, new Uint8Array(signature)));
+    const encodedSignature = btoa(String.fromCharCode.apply(null, Array.from(new Uint8Array(signature))));
+    return encodedHeader + '.' + encodedPayload + '.' + encodedSignature;
+};
+// mian
+function kk_ai_chat_easy(the_init_obj) {
+    const obj = {
+        post_url: the_init_obj.post_url,
+        post_header: the_init_obj.post_header || {},
+        post_body: the_init_obj.post_body || {},
+        init_ui_el_scroll_to_bottom_on_stream: the_init_obj.init_ui_el_scroll_to_bottom_on_stream || undefined,
+        init_ui_el_scroll_to_bottom_on_send: the_init_obj.init_ui_el_scroll_to_bottom_on_send || undefined,
+        fn_callbackOnChunk: the_init_obj.fn_callbackOnChunk || undefined,
+        fn_callbackOnDone: the_init_obj.fn_callbackOnDone || undefined,
+        fn_callbackOnError: the_init_obj.fn_callbackOnError || undefined,
+        is_use_default_stream_unpack_method: the_init_obj.is_use_default_stream_unpack_method || false,
+        cfg_time_throttle: 180,
+        store_char_chat: {
+            status_pending: false,
+            status_streaming: false,
+            chat_list: the_init_obj.init_chat_list || [],
+            chat_form: {
+                text: '',
+            },
+        },
+        async fetchStream(post_body, post_url, post_header, fn_callbackOnChunk, fn_callbackOnDone, fn_callbackOnError) {
+            if (!post_body && obj.store_char_chat.chat_form.text.trim() === '') {
+                throw new Error(`Hello, both post_body and input text, are empty.`);
+            }
+            console.log('dev: fetchStream - post_body: ');
+            console.log(post_body);
+            if (!obj.post_url && post_url) {
+                obj.post_url = post_url;
+            }
+            if (!obj.post_header && post_header) {
+                obj.post_header = post_header;
+            }
+            if (!obj.fn_callbackOnChunk && fn_callbackOnChunk) {
+                obj.fn_callbackOnChunk = fn_callbackOnChunk;
+            }
+            if (!obj.fn_callbackOnDone && fn_callbackOnDone) {
+                obj.fn_callbackOnDone = fn_callbackOnDone;
+            }
+            if (!obj.fn_callbackOnError && fn_callbackOnError) {
+                obj.fn_callbackOnError = fn_callbackOnError;
+            }
+            try {
+                obj.store_char_chat.status_pending = true;
+                obj.store_char_chat.status_streaming = true;
+                const body_obj = Object.assign({}, obj.calcDefaultPostBodyForApiBeforeFetch(), // 主要是 messages 字段的数组
+                post_body || {});
+                obj.store_char_chat.chat_form.text = '';
+                setTimeout(() => {
+                    obj.uiScrollToBottom();
+                }, 10);
+                console.log('hearders: ' + post_header);
+                console.log('this.post_header: ' + obj.post_header);
+                console.log('body_obj: ');
+                console.log(body_obj);
+                //fetch之前，添加 assistant 对话内容的空数据结构
+                if (obj.store_char_chat.chat_list[obj.store_char_chat.chat_list.length - 1].role !== 'assistant') {
+                    obj.store_char_chat.chat_list.push({
+                        role: "assistant",
+                        arr_content: [
+                            {
+                                text: "",
+                            }
+                        ]
+                    });
+                }
+                // 发送消息后自动滚动到底部
+                setTimeout(() => {
+                    if (obj.init_ui_el_scroll_to_bottom_on_send) {
+                        const scrollElement = document.querySelector(obj.init_ui_el_scroll_to_bottom_on_send);
+                        if (scrollElement) {
+                            scrollElement.scrollTo({
+                                top: scrollElement.scrollHeight,
+                                behavior: 'smooth',
+                            });
+                        }
+                    }
+                }, 10);
+                //main fetch
+                let url = post_url || obj.post_url;
+                // 如果 url 以 / 结尾，则去掉结尾的 /，并拼接 /chat/completions
+                url = url.trim().replace(/\/$/, '');
+                if (url.indexOf('/chat/completions') === -1) {
+                    url = url + '/chat/completions';
+                }
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: post_header || obj.post_header,
+                    body: JSON.stringify(body_obj),
+                });
+                obj.store_char_chat.status_pending = false;
+                if (!response?.ok || !response?.body) {
+                    obj.store_char_chat.status_streaming = false;
+                    console.log('dev: fetchStream() - response:');
+                    console.log(response);
+                    return;
+                }
+                const reader = response.body.getReader();
+                let text_all = '';
+                let temp_text_group = '';
+                let temp_text_group_st = 0;
+                let token_usage = "";
+                let is_loop_should_done = false;
+                do {
+                    const { done: is_done, value } = await reader.read();
+                    let text_mini = new TextDecoder("utf-8").decode(value);
+                    if (obj.is_use_default_stream_unpack_method === true) {
+                        text_mini = obj.defaultStreamUnpackMethod(text_mini);
+                    }
+                    temp_text_group += text_mini;
+                    const st_now = new Date().valueOf();
+                    if (st_now - temp_text_group_st >= obj.cfg_time_throttle || is_done) {
+                        temp_text_group_st = st_now;
+                        const text_group = temp_text_group;
+                        temp_text_group = '';
+                        text_all = (text_all + text_group).trim();
+                        // 定义返回形状
+                        const chunk_obj = {
+                            text_group,
+                            text_all,
+                            token_usage,
+                        };
+                        if (obj.fn_callbackOnChunk) {
+                            obj.fn_callbackOnChunk(chunk_obj);
+                        }
+                        console.log('dev: text_group: ' + text_group);
+                        obj.updateStoreCharChat(chunk_obj);
+                        obj.uiScrollToBottom();
+                        // done
+                        is_loop_should_done = is_done;
+                        if (is_loop_should_done) {
+                            console.log('dev:text_all: ' + text_all);
+                            obj.store_char_chat.status_streaming = false;
+                            // 结束时，获取 token_usage
+                            console.log('dev:text_mini: ' + text_mini);
+                            const pattern_usage = /"completion_tokens":\s*"((?:\\.|[^"\\])*)"/g;
+                            const match_usage = pattern_usage.exec(text_mini);
+                            if (match_usage) {
+                                token_usage = match_usage[1];
+                            }
+                            // 最后更新 chunk_obj
+                            obj.updateStoreCharChat(chunk_obj);
+                            // 触发自定义结束时回调函数
+                            if (obj.fn_callbackOnDone) {
+                                obj.fn_callbackOnDone(chunk_obj);
+                                setTimeout(() => {
+                                    obj.uiScrollToBottom();
+                                }, 10);
+                            }
+                        }
+                    }
+                } while (!is_loop_should_done);
+            }
+            catch (error) {
+                console.error('dev: fetchStream() - Error processing event stream:', error);
+                const fn_err = fn_callbackOnError || obj.fn_callbackOnError || undefined;
+                if (fn_err) {
+                    fn_err(error);
+                }
+                obj.store_char_chat.status_streaming = false;
+                obj.rollbackLastChat();
+            }
+        },
+        // 计算api所需的默认的post body 的 messages 结构。(触发发送对话时调用)
+        calcDefaultPostBodyForApiBeforeFetch() {
+            const chat_form_text = obj.store_char_chat.chat_form.text;
+            obj.store_char_chat.chat_list.push({
+                role: 'user',
+                arr_content: [
+                    {
+                        ...obj.store_char_chat.chat_form,
+                        text: chat_form_text,
+                    },
+                ],
+            });
+            const messages = obj.store_char_chat.chat_list.map((item) => {
+                return {
+                    role: item.role,
+                    content: item.arr_content[item.arr_content_index || 0].text,
+                };
+            });
+            return Object.assign({}, obj.post_body, {
+                'messages': messages,
+            });
+        },
+        // 回滚最后一次对话 - 如对话失败时需要回滚。
+        rollbackLastChat() {
+            obj.store_char_chat.chat_form.text = obj.store_char_chat.chat_list[obj.store_char_chat.chat_list.length - 2].arr_content[0].text;
+            obj.store_char_chat.chat_list.pop();
+            obj.store_char_chat.chat_list.pop();
+        },
+        uiScrollToBottom() {
+            if (obj.init_ui_el_scroll_to_bottom_on_stream) {
+                if (obj.init_ui_el_scroll_to_bottom_on_stream === 'html' ||
+                    obj.init_ui_el_scroll_to_bottom_on_stream === 'body') {
+                    window.scrollTo(0, document.body.scrollHeight);
+                }
+                else {
+                    const el = document.querySelector(obj.init_ui_el_scroll_to_bottom_on_stream);
+                    if (el) {
+                        el.scrollTop = el.scrollHeight - el.clientHeight;
+                    }
+                }
+            }
+        },
+        updateStoreCharChat(chunk_obj) {
+            const chat_list = obj.store_char_chat.chat_list;
+            const last_chat_item = chat_list[chat_list.length - 1];
+            last_chat_item.arr_content[last_chat_item.arr_content_index || 0].text = chunk_obj.text_all;
+            last_chat_item.token_usage = chunk_obj.token_usage;
+        },
+        defaultStreamUnpackMethod(stream_text) {
+            // console.log('dev:defaultStreamUnpackMethod:stream_text: ' + stream_text);
+            const pattern = /"content":\s*"((?:\\.|[^"\\])*)"/g;
+            let match;
+            let result = '';
+            while ((match = pattern.exec(stream_text)) !== null) {
+                result += match[1];
+            }
+            return result.replace(/\\n/g, '\n').replace(/\\"/g, '"');
+        },
+    };
+    return obj;
+}
+// export { jwtSign, kk_ai_chat_easy };
+</script>
+  <script>/**
+ * 2026-04-10
+ * 原理介绍：chat塌缩，适用于故事型AI对话，把 chat_list 模式浓缩，每次对话后都以模板计算出【1段】提示词，永远用该提示词与AI对话。
+ * 优点：故事型、娱乐性的AI对话，采用此模式可以大量精简提示词。
+ * kk_ai_chat_collapse：通过传入AI的最新一次对话内容，直接计算出对下次对话的累积提示词，可用于小说、长对话等来压缩提示词。
+ * 模板变量的格式为：“{{...变量名}}”
+*/
+/** handelTernaryOperatorTemplate - 处理三目运算符模板的专用方法
+ * 三木运算模板的核心解构是 {{判断语句??判断语句为true时返回的内容::判断语句为false时返回的内容}}
+ * 如：{{ char_name ?? 选择名字叫{...char_name}的角色 :: 选择任意角色 }}
+ * 注意1：返回的内容中可能包含换行符，无需移除换行。
+ * 注意2：返回的内容中依然包含变量，格式为：“{...char_name}”
+ * 函数特点：仅支持 变量名 ! > < >= <= == === != !== 等逻辑运算符，绝对安全的解析函数，避免 eval、new Function 等沙箱逃逸风险的办法。
+ * 测试用例1：handelTernaryOperatorTemplate(`我听{{char_name??一个名字叫{...char_name}的人::神秘人}}说过这事`, {'name': '张三'})
+ * 测试用例2(省略“::”后的内容)：handelTernaryOperatorTemplate(`{{des??{...des}}}`, {'des': '李四是一个学生'})
+ * 测试用例3(支持换行)：handelTernaryOperatorTemplate(`{{intro??\n{...intro}}}::\n角色无职业`, {'intro': '王五是一个老师'})
+ * 预期返回值：`我听一个名字叫张三的人说过这事`
+*/
+const handelTernaryOperatorTemplate = (text_template, data) => {
+    const d = data;
+    const isTruthy = (v) => {
+        if (v === undefined || v === null)
+            return false;
+        if (typeof v === 'boolean')
+            return v;
+        if (typeof v === 'number')
+            return v !== 0 && !Number.isNaN(v);
+        if (typeof v === 'string')
+            return v.trim() !== '';
+        return true;
+    };
+    const getIdentValue = (name) => {
+        if (name === 'char_name') {
+            if (d['char_name'] !== undefined)
+                return d['char_name'];
+            if (d['name'] !== undefined)
+                return d['name'];
+        }
+        return d[name];
+    };
+    const substituteBraceVars = (segment) => {
+        return segment.replace(/\{\.\.\.([a-zA-Z_][\w]*)\}/g, (_, key) => String(getIdentValue(key) ?? ''));
+    };
+    const OPS = ['===', '!==', '==', '!=', '>=', '<=', '>', '<'];
+    const compare = (left, op, right) => {
+        const ln = typeof left === 'number' ? left : Number(left);
+        const rn = typeof right === 'number' ? right : Number(right);
+        const bothNum = !Number.isNaN(ln) && !Number.isNaN(rn) && typeof left !== 'boolean' && typeof right !== 'boolean';
+        switch (op) {
+            case '>':
+                return bothNum ? ln > rn : String(left) > String(right);
+            case '<':
+                return bothNum ? ln < rn : String(left) < String(right);
+            case '>=':
+                return bothNum ? ln >= rn : String(left) >= String(right);
+            case '<=':
+                return bothNum ? ln <= rn : String(left) <= String(right);
+            case '==':
+                return left == right;
+            case '!=':
+                return left != right;
+            case '===':
+                return left === right;
+            case '!==':
+                return left !== right;
+            default:
+                return false;
+        }
+    };
+    const evaluateCondition = (condRaw) => {
+        let cond = condRaw.trim();
+        if (!cond)
+            return false;
+        while (cond.startsWith('!')) {
+            return !evaluateCondition(cond.slice(1).trim());
+        }
+        for (const op of OPS) {
+            const idx = cond.indexOf(op);
+            if (idx <= 0)
+                continue;
+            const lhs = cond.slice(0, idx).trim();
+            const rhs = cond.slice(idx + op.length).trim();
+            if (!/^[a-zA-Z_][\w]*$/.test(lhs))
+                continue;
+            const leftVal = getIdentValue(lhs);
+            let rightVal;
+            if (/^-?\d+(\.\d+)?$/.test(rhs)) {
+                rightVal = Number(rhs);
+            }
+            else if (/^[a-zA-Z_][\w]*$/.test(rhs)) {
+                rightVal = getIdentValue(rhs);
+            }
+            else {
+                continue;
+            }
+            return compare(leftVal, op, rightVal);
+        }
+        const m = /^([a-zA-Z_][\w]*)$/.exec(cond);
+        if (m)
+            return isTruthy(getIdentValue(m[1]));
+        return false;
+    };
+    const findTemplateBlockEnd = (text, openStart) => {
+        if (text[openStart] !== '{' || text[openStart + 1] !== '{')
+            return -1;
+        let i = openStart + 2;
+        const n = text.length;
+        while (i < n - 1) {
+            if (text[i] === '{' && text[i + 1] === '{') {
+                const sub = findTemplateBlockEnd(text, i);
+                if (sub < 0)
+                    return -1;
+                i = sub;
+                continue;
+            }
+            if (text[i] === '{') {
+                const m = text.slice(i).match(/^\{\.\.\.([a-zA-Z_][\w]*)\}/);
+                if (m) {
+                    i += m[0].length;
+                    continue;
+                }
+            }
+            if (text[i] === '}' && text[i + 1] === '}')
+                return i + 2;
+            i++;
+        }
+        return -1;
+    };
+    const parseInner = (inner) => {
+        const q = inner.indexOf('??');
+        if (q < 0) {
+            return {
+                cond: '',
+                truePart: inner,
+                falsePart: '',
+                hadInnerDoubleColon: false,
+            };
+        }
+        const cond = inner.slice(0, q);
+        const afterQ = inner.slice(q + 2);
+        const c = afterQ.indexOf('::');
+        if (c >= 0) {
+            return {
+                cond,
+                truePart: afterQ.slice(0, c),
+                falsePart: afterQ.slice(c + 2),
+                hadInnerDoubleColon: true,
+            };
+        }
+        return {
+            cond,
+            truePart: afterQ,
+            falsePart: '',
+            hadInnerDoubleColon: false,
+        };
+    };
+    const takeTrailingFalse = (text, posAfterClose) => {
+        if (!text.slice(posAfterClose).startsWith('::')) {
+            return { falsePart: '', consume: 0 };
+        }
+        const afterColons = posAfterClose + 2;
+        const rest = text.slice(afterColons);
+        const nextOpen = rest.indexOf('{{');
+        if (nextOpen === -1) {
+            return { falsePart: rest, consume: 2 + rest.length };
+        }
+        return { falsePart: rest.slice(0, nextOpen), consume: 2 + nextOpen };
+    };
+    let out = text_template;
+    let guard = 0;
+    while (out.includes('{{') && guard++ < 10000) {
+        const open = out.indexOf('{{');
+        if (open < 0)
+            break;
+        const close = findTemplateBlockEnd(out, open);
+        if (close < 0)
+            break;
+        let { cond, truePart, falsePart, hadInnerDoubleColon } = parseInner(out.slice(open + 2, close - 2));
+        let replaceEnd = close;
+        if (!hadInnerDoubleColon) {
+            const tail = takeTrailingFalse(out, close);
+            if (tail.consume > 0) {
+                falsePart = tail.falsePart;
+                replaceEnd = close + tail.consume;
+            }
+        }
+        const picked = evaluateCondition(cond) ? truePart : falsePart;
+        const segment = substituteBraceVars(picked);
+        out = out.slice(0, open) + segment + out.slice(replaceEnd);
+    }
+    return out;
+};
+// 
+const kk_ai_chat_collapse = (the_init_obj) => {
+    const obj = {
+        // 初始化参数 - 来自 the_init_obj 
+        the_template: the_init_obj.the_template,
+        the_data_for_template: the_init_obj.the_data_for_template,
+        // 记录
+        prompt_last: '', // 上一次的提示词
+        prompt_list: [], // 历次提示词的数组（用于记录调试）
+        // 触发模板合并
+        run: (inputed_the_data_for_template) => {
+            const data = inputed_the_data_for_template || obj.the_data_for_template;
+            let prompt_now = obj.the_template;
+            //替换类型1：简易模板，将模板中的 "{{...变量名}}" 替换为数据对象里的值
+            for (let key in data) {
+                const value = data[key];
+                const placeholder = `{{...${key}}}`;
+                prompt_now = prompt_now.split(placeholder).join(String(value ?? '').trim());
+            }
+            //替换类型2：三目运算符模板
+            prompt_now = handelTernaryOperatorTemplate(prompt_now, data);
+            // 优化拼合模板后的多行换行
+            prompt_now = prompt_now.replace(/\n\n\n/g, '\n\n').replace(/\n{3,}/g, '\n\n\n');
+            obj.prompt_last = prompt_now; // 主返回值
+            obj.prompt_list.push(prompt_now); // 用于调试
+            return obj.prompt_last;
+        }
+    };
+    // 初始化时执行一次
+    obj.run();
+    return obj;
+};
+// export { kk_ai_chat_collapse };
+</script>
+  <script>"use strict";
+const iToast = {
+    help: {
+        version: '1.4',
+        author: 'lee2pop',
+        author_github: 'https://github.com/lee2pop',
+        author_note: '',
+    },
+    baseConfig: {
+        position: 'top-center', /* position for global box */
+        time: 4000, /* how long keeps for per item */
+        push_before: 0, /* 0 - push item in before, 1 push item in after*/
+        colors: {
+            'default': 'rgba(50,50,50,0.9)',
+            'blue': '#0077E8',
+            'green': '#22B166',
+            // 'red': '#D74931',
+            'red': '#E56363',
+            'yellow': '#FFA916',
+            /* → you can add another coler here */
+        },
+    },
+    setColor: function (name, c_value) {
+        this.baseConfig.colors[name] = c_value;
+    },
+    setPosition: function (class_name) {
+        // create the ul box if on the first push
+        if (!this.domToastBox) {
+            this.initDom();
+        }
+        if (typeof class_name === 'string') {
+            this.domToastBox.className = this.domToastBox.className.replace(' top-center', '').replace(' top-right', '').replace(' bottom-right', '');
+            this.domToastBox.className = this.domToastBox.className + ' ' + class_name;
+        }
+    },
+    domToastBox: null,
+    initDom() {
+        const dom_ul = document.createElement('ul');
+        dom_ul.className = 'ice-toast-box custom ' + this.baseConfig.position;
+        document.body.appendChild(dom_ul);
+        this.domToastBox = dom_ul;
+        const dom_style = document.createElement('style');
+        dom_style.innerHTML = this.style;
+        document.body.appendChild(dom_style);
+    },
+    // 核心方法，触发弹窗
+    push: function (xx) {
+        // create the ul box if on the first push
+        if (!this.domToastBox) {
+            this.initDom();
+        }
+        // select ul dom
+        const ul = this.domToastBox;
+        // prepare params for li
+        let words = '';
+        let bgcolor = 'default';
+        let time = this.baseConfig.time;
+        // handle xx type
+        if (typeof xx === 'string' || typeof xx === 'number') {
+            words = xx;
+        }
+        else if (typeof xx === 'object' && xx !== null && 'words' in xx) {
+            words = xx.words;
+            if (xx.bgcolor)
+                bgcolor = xx.bgcolor;
+            if (xx.time)
+                time = xx.time;
+        }
+        // show li in the dom
+        const li = document.createElement('li');
+        const bgStyle = this.baseConfig.colors[bgcolor]
+            ? `background: ${this.baseConfig.colors[bgcolor]};`
+            : '';
+        li.innerHTML =
+            `<div class="ice-toast" style="` +
+                bgStyle +
+                `">${String(words)}</div>`;
+        // dom push
+        if (this.baseConfig.push_before && ul.children.length > 0) {
+            ul.insertBefore(li, ul.children[0]);
+        }
+        else {
+            ul.appendChild(li);
+        }
+        // remove li in the dom
+        this.remove(ul, li, time);
+    },
+    remove(ul, li, time) {
+        li.style.height = li.clientHeight + 'px';
+        setTimeout(function () {
+            li.classList.add('li-height-0');
+        }, time - 300 > 0 ? time - 300 : 0);
+        setTimeout(function () {
+            ul.removeChild(li);
+        }, time);
+    },
+    style: `/* ↓ you can edit the width */
+    :root{
+      --ice-toast-box-width: 350px;
+    }
+    .ice-toast-box{
+      font-size: 14px;
+      list-style: none;
+      position: fixed;
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0px;
+      width: var(--ice-toast-box-width);
+      max-width: 100%;
+      margin: 0 auto;
+      text-align: center;
+      z-index: 1234;
+    }
+    .ice-toast-box.top-center{
+      top: 30px;
+      left: 50%;
+      margin-left: calc( var(--ice-toast-box-width) / -2 );
+    }
+    .ice-toast-box.top-right{
+      top: 30px;
+      right: 30px;
+      left: auto;
+    }
+    .ice-toast-box.bottom-right{
+      top: auto;
+      bottom: 30px;
+      right: 30px;
+      left: auto;
+    }
+    .ice-toast-box li{
+      padding-top: 5px;
+      padding-bottom: 5px;
+      box-sizing: border-box;
+    }
+    .ice-toast-box li.li-height-0{
+      height: 0 !important;
+      padding-top: 0 !important;
+      padding-bottom: 0 !important;
+      transition: all 0.3s ease;
+      opacity: 0;
+      overflow: hidden;
+    }
+    .ice-toast-box li.li-height-0 .ice-toast{
+      transform: scley(0);
+    }
+    .ice-toast-box .ice-toast{
+      box-sizing: border-box;
+      padding: 10px 20px;
+      background-color: rgba(50,50,50,0.9);
+      color: #fff;
+      border-radius: 10px;
+      text-align: center;
+      animation: ice-toast-anim-popin 0.2s;
+    }
+
+    /* ↓ you can edit the animation */
+    @keyframes ice-toast-anim-popin {
+      0% {
+        opacity: 0;
+        transform: scale(0.8);
+      }
+      100% {
+        transform: scale(1);
+      }
+    }
+    `,
+};
+/*↓ you can export it if you need */
+// export default iToast;
+</script>
+  <script>const markdown_tool_for_url = {
+    dict_parse_markdown_to_url_params: [
+        ['#', '↟↟'],
+        [" ", "ˍˍ"],
+        ["\n", "↵↵"],
+        ["\t", "→→"],
+    ],
+    /** 将 markdown 文本编码为可放入 URL 参数的字符串。 */
+    parseMarkdownToUrlParamString(markdown) {
+        if (!markdown)
+            return "";
+        let result = markdown;
+        for (const [source, target] of this.dict_parse_markdown_to_url_params) {
+            result = result.replace(new RegExp(source, "g"), target);
+        }
+        return result;
+    },
+    /** 将 URL 参数字符串解码还原为 markdown 文本。 */
+    parseUrlParamStringToMarkdown(paramString) {
+        if (!paramString)
+            return "";
+        let result = paramString;
+        for (const [source, target] of this.dict_parse_markdown_to_url_params) {
+            result = result.replace(new RegExp(target, "g"), source);
+        }
+        return result;
+    },
+    /** 从 URL 查询参数读取指定字段，并还原为 markdown。 */
+    getMarkdownFromUrl(param_name, urlSearchString) {
+        const params = new URLSearchParams(urlSearchString || window.location.search);
+        const value_encoded = params.get(param_name);
+        const value_markdown = this.parseUrlParamStringToMarkdown(value_encoded);
+        return this.parseUrlParamStringToMarkdown(value_markdown);
+    },
+};
+// export { markdown_tool_for_url };
+</script>
+
+  <!-- dev开发时使用 -->
+  <!-- <script src="./kk_tool_markdown_to_html.js"></script> -->
+
+  <!-- 压缩对话 -->
+  <script>// 简易中文分词
+const easySegment = (text) => {
+    // 空值直接返回
+    if (!text)
+        return [];
+    // 1. 计算文本总长度 和 空格数量
+    const totalLength = text.length;
+    const spaceCount = (text.match(/ /g) || []).length;
+    const spaceRatio = spaceCount / totalLength;
+    // 2. 判断：空格占比 >= 10% → 判定为英文，按空格分词
+    if (spaceRatio >= 0.1) {
+        return text
+            .split(' ') // 按空格分割
+            .map(word => word.replace(/,|'|:|!|\?/g, '').trim()) // 去除首尾空白
+            .filter(word => word.length >= 3); // 只保留长度 ≥3 的词汇
+    }
+    // 3. 原有中文分词逻辑（完全不变）
+    if (!Intl?.Segmenter) {
+        return [];
+    }
+    let arr = Array.from(new Intl.Segmenter('zh-CN', { granularity: 'word' }).segment(text), (s) => s.segment.trim()).filter(Boolean);
+    let res = [];
+    let word_joined = '';
+    for (let i = 0; i < arr.length; i++) {
+        const item = arr[i];
+        if (item.length >= 2) {
+            res.push(item);
+            word_joined = '';
+        }
+        else {
+            word_joined += item;
+        }
+    }
+    if (word_joined.length > 0) {
+        res.push(word_joined);
+    }
+    res = res.map(word => word.replace(/，|。|：|！|？/g, ''));
+    return res;
+};
+// export { easySegment };
+</script>
+
+  <!-- costory 读取/存储 -->
+  <script>/**
+ * 2026-04-20
+ * ## costory 介绍 >>>
+ * - costory 是一种基于 Markdown 的剧情脚本格式，锁定了关键的标题关键字，默认存储为 xxx.costory.txt 文件。
+ * - 一份 costory 文件就是一份剧情脚本，人和 AI 都可以使用 costory 来创作剧情。
+ * ## costory 有何不同
+ * - 与普通“AI酒馆”剧本最不同的是：costory 提示词视角不是 {{char}} 和 {{user}}，而是“编剧”。
+ * - “编剧”以全能创造者的身份，可以创生各种各样的角色，而玩家可以随时切换互动角色，推进故事。
+ *
+ * ## 为甚么采用 costory 格式？ >>>
+ * - 其实一份 costory 文件最终是转换为 JSON 后才被程序使用。
+ * - JSON 已经足够简单，但仍不能对全部的 A I玩家和故事创作者 0 成本使用。
+ * - 所以 KK 设计了 costory 规范格式，让 AI 剧本创作 0 门槛。
+ *
+ * ## AI 剧本介绍
+ * - AI 剧本主要定义了 3 项数据：1-背景设定、2-编剧风格、3-历史剧情，其他如玩家名称等则按需添加。
+ * - 通过以上数据，AI 则可以驱动剧本与玩家互动。
+ * - costory 就是锁定了以上关键的 key 以便此格式通用语玩家和创作者之间。
+ *
+ * ## costory 1.0 锁定了哪些**关于剧本本身**的标题关键字(中文/英文)？ >>>
+ * 以下3项是最重要的：
+ * - _背景设定_ / _background_setting_
+ * - _编剧风格_ / _writer_style_
+ * - _序幕引言_ / _prologue_leadin_
+ * 其次还有这些：
+ * - _玩家名称_ / _player_name_
+ * - _玩家描述_ / _player_desc_
+ * 还有这些：
+ * - _可选开场_ / _optional_opening_
+ * - _结局条件_ / _ending_option_
+ *
+ * ## costory 1.0 锁定了哪些**关于剧本介绍**的标题关键字(中文/英文)？ >>>
+ * - _故事名称_ / _story_name_
+ * - _故事介绍_ / _story_intro_
+ * - _故事标签_ / _story_tag_
+ * - _作者名称_ / _author_name_
+ * - _作者邮箱_ / _author_email_
+ * - _作者连接_ / _author_link_
+ * - _作者介绍_ / _author_intro_
+ * - _托管方名称_ / _keeper_name_
+ * - _托管方邮箱_ / _keeper_email_
+ * - _托管方介绍_ / _keeper_intro_
+ * - _托管方链接_ / _keeper_link_
+ *
+ * ## 识别规则（重要）：
+ * - 1，仅二级标题“## ”才纳入 key-value 识别
+ * - 2，二级标题文本中匹配到中文或英文关键字，均认为匹配成功，然后按英文关键字组织 JSON 对象。
+ *
+ * ## 一份 costory 1.0 文件示例 >>>
+ * ```markdown
+ * # costory 1.0 >>>
+ *
+ * ## _背景设定_ >>>
+ * 西游记平行世界，套用《西游记》世界观与人物。但沙僧已经被被白骨精收买，成了取经团队中的卧底。
+ * 悟空将千方百计阻止白骨精加害唐僧。
+ *
+ * ## _编剧风格_ >>>
+ * 古典志怪小说文风，恐怖骇人，情节曲折，悬念迭起。
+ *
+ * ## _序幕引言_ >>>
+ * 这日午后日头毒辣，唐僧与悟空、八戒于树下乘凉。白骨精所化一农夫从远处走来。
+ *
+ * ## _玩家名称_ >>>
+ * 白骨精
+ *
+ * ## _玩家描述_ >>>
+ * 白骨精已经与沙僧联手，欲一起吃到唐僧肉，然后远走高飞。
+ *
+ * ## _结局条件_ >>>
+ * - 白骨精吃到了唐僧的肉
+ * - 白骨精死了
+ * - 白骨精加入了取经团队
+ * ```
+*/
+const COSTORY_KEYWORDS = [
+    // 剧本本身
+    { key: "_background_setting_", aliases: ["背景设定", "_background_setting_"] },
+    { key: "_writer_style_", aliases: ["编剧风格", "_writer_style_"] },
+    { key: "_prologue_leadin_", aliases: ["序幕引言", "_prologue_leadin_"] },
+    { key: "_player_name_", aliases: ["玩家名称", "_player_name_"] },
+    { key: "_player_desc_", aliases: ["玩家描述", "_player_desc_"] },
+    { key: "_ending_option_", aliases: ["结局条件", "_ending_option_"] },
+    // 剧本介绍
+    { key: "_story_name_", aliases: ["故事名称", "_story_name_"] },
+    { key: "_story_intro_", aliases: ["故事介绍", "_story_intro_"] },
+    { key: "_story_tag_", aliases: ["故事标签", "_story_tag_"] },
+    // 作者信息
+    { key: "_author_name_", aliases: ["作者名称", "_author_name_"] },
+    { key: "_author_email_", aliases: ["作者邮箱", "_author_email_"] },
+    { key: "_author_link_", aliases: ["作者连接", "_author_link_"] },
+    { key: "_author_intro_", aliases: ["作者介绍", "_author_intro_"] },
+    // 托管方信息（网站平台方）
+    { key: "_keeper_name_", aliases: ["托管方名称", "_keeper_name_"] },
+    { key: "_keeper_email_", aliases: ["托管方邮箱", "_keeper_email_"] },
+    { key: "_keeper_intro_", aliases: ["托管方介绍", "_keeper_intro_"] },
+    { key: "_keeper_link_", aliases: ["托管方链接", "_keeper_link_"] },
+];
+const COSTORY_OUTPUT_ORDER = COSTORY_KEYWORDS.map((item) => item.key);
+function normalizeHeading(input) {
+    return input.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fa5]/g, "");
+}
+function detectCostoryKey(headingText) {
+    const normalizedTitle = normalizeHeading(headingText);
+    for (const { key, aliases } of COSTORY_KEYWORDS) {
+        for (const alias of aliases) {
+            if (normalizedTitle.includes(normalizeHeading(alias))) {
+                return key;
+            }
+        }
+    }
+    return null;
+}
+function parseSectionValue(lines, key) {
+    const cleanedLines = lines.map((line) => line.trimEnd());
+    if (key === "ending_option") {
+        const options = cleanedLines
+            .map((line) => line.match(/^\s*[-*]\s+(.*)$/)?.[1]?.trim() ?? "")
+            .filter(Boolean);
+        if (options.length > 0) {
+            return options;
+        }
+    }
+    return cleanedLines.join("\n").trim();
+}
+function titleOfKey(key) {
+    const found = COSTORY_KEYWORDS.find((item) => item.key === key);
+    return found ? found.aliases[0] : key;
+}
+const costory = {
+    loadFile() {
+        // load 时仅接受 .md/.txt，读取后按 costory 规则解析并返回 JSON。
+        return new Promise((resolve, reject) => {
+            const input = document.createElement("input");
+            input.type = "file";
+            input.accept = ".md,.txt,text/markdown,text/plain";
+            input.style.display = "none";
+            const cleanup = () => {
+                input.remove();
+            };
+            input.addEventListener("change", async () => {
+                const file = input.files?.[0];
+                if (!file) {
+                    cleanup();
+                    reject(new Error("未选择文件"));
+                    return;
+                }
+                try {
+                    const markdown = await file.text();
+                    const parsed = this.parseMarkdownToJson(markdown);
+                    resolve(parsed);
+                }
+                catch (error) {
+                    reject(error);
+                }
+                finally {
+                    cleanup();
+                }
+            });
+            document.body.appendChild(input);
+            input.click();
+        });
+    },
+    saveFile(json, filename) {
+        // save 时将 JSON 按 costory 1.0 写回 markdown，并触发本地下载。
+        console.log('dev:kk_costory.js: saveFile() - json', json);
+        const markdown = this.parseJsonToMarkdown(json);
+        const storyName = typeof json["_story_name_"] === "string" ? json["_story_name_"].trim() : "";
+        const safeStoryName = storyName || "my-costory";
+        const finalName = filename || `${safeStoryName}.costory.txt`;
+        const blob = new Blob([markdown], { type: "text/markdown;charset=utf-8" });
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = finalName;
+        link.style.display = "none";
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(link.href);
+        return markdown;
+    },
+    //
+    parseMarkdownToJson(markdown) {
+        // 仅识别二级标题（##），命中中文/英文关键字后统一使用英文 key。
+        const result = {};
+        const lines = markdown.replace(/\r\n/g, "\n").split("\n");
+        let activeKey = null;
+        let buffer = [];
+        const flush = () => {
+            if (!activeKey)
+                return;
+            const value = parseSectionValue(buffer, activeKey);
+            if ((Array.isArray(value) && value.length > 0) || (!Array.isArray(value) && value !== "")) {
+                result[activeKey] = value;
+            }
+            buffer = [];
+        };
+        for (const line of lines) {
+            const headingMatch = line.match(/^##\s+(.+)$/);
+            if (headingMatch) {
+                flush();
+                activeKey = detectCostoryKey(headingMatch[1]);
+                continue;
+            }
+            if (activeKey) {
+                buffer.push(line);
+            }
+        }
+        flush();
+        return result;
+    },
+    //
+    parseJsonToMarkdown(json) {
+        // 按固定顺序输出，未知 key 放到末尾，保证可逆与可读。
+        const blocks = [
+            "# costory 1.0 >>>",
+            "more: https://costory.online/",
+        ];
+        const used = new Set();
+        const emitSection = (key, value) => {
+            const title = titleOfKey(key);
+            blocks.push("", `## _${title}_ >>>`);
+            if (Array.isArray(value)) {
+                blocks.push(...value.map((item) => `- ${item}`));
+            }
+            else {
+                blocks.push(value);
+            }
+            used.add(key);
+        };
+        for (const key of COSTORY_OUTPUT_ORDER) {
+            if (key in json) {
+                emitSection(key, json[key]);
+            }
+        }
+        for (const key of Object.keys(json)) {
+            if (!used.has(key)) {
+                emitSection(key, json[key]);
+            }
+        }
+        return blocks.join("\n").trim() + "\n";
+    },
+    // 便捷工具
+    /**
+     * 转换key的 cfg_object ，示例：{ "_background_setting_": "my_background", "_writer_style_": "my_style", "_prologue_leadin_": "my_prologue" }
+    */
+    happyAfterLoad(cfg_object, // 转换key的配置对象，如上示例。
+    app_store_obj, // 应用的 store 对象，用于存储转换后的数据，直接按 cfg_object 对应的 key 操作赋值。
+    costory_json) {
+        if (!cfg_object || !app_store_obj || !costory_json)
+            return;
+        for (const [costoryKey, appStoreKey] of Object.entries(cfg_object)) {
+            if (!appStoreKey)
+                continue;
+            app_store_obj[appStoreKey] = costory_json[costoryKey];
+        }
+        // 补充支持：若 app_store_obj 与 costory_json 都存在同名标准 key，则直接回填。
+        for (const { key } of COSTORY_KEYWORDS) {
+            if (!(key in JSON.parse(JSON.stringify(app_store_obj))))
+                continue;
+            if (!(key in costory_json))
+                continue;
+            console.log('dev:kk_costory.js: happyAfterLoad() - key finded', key);
+            app_store_obj[key] = costory_json[key];
+        }
+    },
+    happyBeforeSave(cfg_object, // 转换key的配置对象，如上示例。
+    app_store_obj) {
+        console.log('dev:kk_costory.js: happyBeforeSave() - app_store_obj', app_store_obj);
+        const temp_costory_json = {};
+        if (!app_store_obj)
+            return { json: temp_costory_json, markdown: '' };
+        // 支持全部英文 key：优先使用 cfg 映射，其次回落到同名英文 key。
+        for (const costoryKey of COSTORY_OUTPUT_ORDER) {
+            const appStoreKey = cfg_object?.[costoryKey] || costoryKey;
+            const value = app_store_obj[appStoreKey];
+            if (value === undefined || value === null)
+                continue;
+            if (Array.isArray(value)) {
+                temp_costory_json[costoryKey] = value.map((item) => String(item));
+            }
+            else {
+                temp_costory_json[costoryKey] = String(value);
+            }
+        }
+        console.log('dev:kk_costory.js: happyBeforeSave() - temp_costory_json', temp_costory_json);
+        return { json: temp_costory_json, markdown: this.parseJsonToMarkdown(temp_costory_json) };
+    },
+};
+// export { costory };
+</script>
+
+  <!-- 故事关键词 -->
+  <script>
+const arr_keywords_line_words = [
+  "直接",
+  "突然",
+  "完全",
+  "不像",
+  "毕竟",
+  "严重",
+  "或许",
+  "同时",
+  "反而",
+  "反倒",
+  "怎料",
+  "哪些",
+  "哪里",
+  "哪个",
+  "从哪",
+  "为什么",
+  "怎么",
+  "息怒",
+  "愤怒",
+  "开心",
+  "悲伤",
+  "难过",
+  "高兴",
+  "愉快",
+  "思念",
+  "解释",
+  "说明",
+  "抉择",
+  "选择",
+  "做出",
+  "未知",
+  "只愿",
+  "偏偏",
+  "倒像是",
+  "老实说",
+  "事实上",
+  "非但",
+  "并非",
+  "并不是",
+  "莫非",
+  "恐怕",
+  "生怕",
+  "只怕",
+  "只求",
+  "如果",
+  "万一",
+  "假设",
+  "如若",
+  "若是",
+  "一旦",
+  "免得",
+  "若有",
+  "最终",
+  "假使",
+  "友情",
+  "爱情",
+  "亲情",
+  "怎奈",
+  "真相",
+  "谎言",
+  "欺骗",
+  "真实",
+  "吗？",
+  "呢？",
+  "切记",
+  "重要",
+  "千万",
+  "幸好",
+  "终究",
+  "但愿",
+  "休要",
+  "唯一",
+  "敌人",
+  "朋友",
+  "故人",
+  "老人",
+  "少年",
+  "少女",
+  "孩子",
+  "婴儿",
+  "母亲",
+  "父亲",
+  "妻子",
+  "伴侣",
+  "丈夫",
+  "叔叔",
+  "阿姨",
+  "于是",
+  "然后",
+  "接着",
+  "跟着",
+  "继而",
+  "随后",
+  "随即",
+  "但是",
+  "可是",
+  "然而",
+  "不过",
+  "只是",
+  "否则",
+  "反之",
+  "而且",
+  "并且",
+  "甚至",
+  "尤其",
+  "乃至",
+  "不但",
+  "不仅",
+  "不光",
+  "尚且",
+  "何况",
+  "况且",
+  "而况",
+  "因为",
+  "由于",
+  "所以",
+  "因此",
+  "因而",
+  "以致",
+  "既然",
+  "可见",
+  "假如",
+  "假若",
+  "要是",
+  "设若",
+  "倘若",
+  "倘使",
+  "虽然",
+  "固然",
+  "尽管",
+  "即使",
+  "就算",
+  "哪怕",
+  "纵然",
+  "纵使",
+  "就是",
+  "或者",
+  "还是",
+  "要么",
+  "宁可",
+  "与其",
+  "只要",
+  "只有",
+  "除非",
+  "无论",
+  "任凭",
+  "不管",
+  "不论",
+  "为了",
+  "以便",
+  "以免",
+  "以防",
+  "以及"
+]
+
+const arr_keywords_emotion = [
+  /* —— 悲伤与哀痛 —— */
+  "悲痛", "悲伤", "绝望", "凄凉", "哀伤", "凄惨", "心碎",
+
+  /* —— 愤怒与狂怒 —— */
+  "狂怒", "愤怒", "暴怒", "震怒", "怒火", "怨恨", "仇视",
+  "咆哮", "暴躁", "恼怒",
+
+  /* —— 喜悦与狂喜 —— */
+  "狂喜", "欢腾", "激动", "欢呼", "亢奋", "狂欢", "欢乐", "惊喜", "欢颜", "高兴", "喜悦",
+
+  /* —— 恐惧与惊慌 —— */
+  "惊恐", "恐惧", "惶恐", "惊骇", "战栗", "胆寒", "惊慌", "胆怯", "心悸", "害怕", "怯懦",
+
+  /* —— 惊讶与震惊 —— */
+  "震惊", "惊叹", "惊愕", "惊异", "惊讶", 
+
+  /* —— 厌恶与反感 —— */
+  "憎恶", "厌恶", "嫉妒", "鄙夷", "唾弃", "作呕", "讨厌", "痛恨", "恶心", "蔑视",
+
+  /* —— 爱恋与痴迷 —— */
+  "痴迷", "痴情", "热恋", "钟情", "眷恋", "迷恋", "钟爱", "爱慕",
+  "沉溺", "挚爱", "倾心", "眷念", "缱绻", "缠绵", "贪欢", "痴心",
+
+  /* —— 焦虑与烦躁 —— */
+  "焦躁", "焦灼", "焦急", "躁动", "烦躁", "焦虑", "忐忑", "抓狂", "忧心",
+
+  /* —— 孤独与空虚 —— */
+  "孤寂", "寂寥", "落寞", "孤独", "凄清", "苍凉", "空虚", "荒芜", "凄冷", "孤苦",
+
+  /* —— 骄傲与傲慢 —— */
+  "骄傲", "狂妄", "傲慢", "逞强", "嚣张", "凌厉", "自大", "狂傲", "桀骜", "高傲",
+
+  /* —— 羞愧与内疚 —— */
+  "羞愧", "愧疚", "懊悔", "悔恨", "懊恼", "忏悔", "自责", "内疚", "懊丧", "追悔", "抱愧", "悔过",
+
+  /* —— 困惑与迷茫 —— */
+  "迷茫", "惘然", "彷徨", "迷惘", "困惑", "怅惘", "懵懂", "困顿", "怅然", "迷惑",
+
+  /* —— 压抑与沉重 —— */
+  "压抑", "沉重", "憋屈", "窒息", "沉郁", "阴郁", "郁闷", "沉闷", "堵心",
+
+  /* —— 崩溃与极端 —— */
+  "崩溃", "瓦解", "颓丧", "毁灭", "发狂", "疯癫", "癫狂", "失常", "暴毙",
+]
+
+// export { arr_line_words, arr_emotion };
+
+</script>
+
+  <style>:root[data-theme="dark"] {
+  --bg: #18181d;
+  --bg-elevated: #0e0e11;
+  --bg-panel: #141417;
+  --border: #2a2a32;
+  --text: #bababa;
+  --text-muted: #9898a6;
+  --msg-other-bg: #2f323b;
+  --msg-self-bg: #303a47;
+  --accent: #709bd6;
+  --input-bg: #1b1b20;
+  --shadow: rgba(0, 0, 0, 0.45);
+  --infor: #406340;
+}
+:root[data-theme="light"] {
+  --bg: #f4f3ee;
+  --bg-elevated: #cdccc7;
+  --bg-panel: #e8e7e2;
+  --border: #d8dce3;
+  --text: #230d07;
+  --text-muted: #635841;
+  --msg-other-bg: #e9e9e6;
+  --msg-self-bg: #e1e1e1;
+  --accent: #b56e00;
+  --input-bg: #efede7;
+  --shadow: rgba(15, 23, 42, 0.12);
+  --infor: #77996f;
+}
+:root {
+  --mobile-breakpoint: 768px;
+  --chat-area-max-width: 700px;
+}
+
+.word-highlight {
+  color: var(--accent);
+  transition: color 0.2s;
+}
+.tip-dev {
+  color: var(--accent);
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body {
+  margin: 0;
+  height: 100%;
+  font-family: SimSun, "宋体", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+p {
+  margin-top: 0.2em;
+  margin-bottom: 0.3em;
+}
+hr {
+  border: none;
+  border-top: 2px dashed var(--border);
+  margin: 10px 0px;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 100vh;
+  overflow: hidden;
+}
+
+.top-bar {
+  flex-shrink: 0;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  background: var(--bg-elevated);
+  z-index: 30;
+}
+
+.corner-btn {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+.corner-btn:hover {
+  background: var(--bg-panel);
+}
+.corner-btn[aria-pressed="true"] {
+  background: var(--bg-panel);
+  color: var(--accent);
+}
+
+.shell {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  position: relative;
+}
+
+.panel-left-wrap,
+.panel-right-wrap {
+  flex-shrink: 0;
+  overflow: hidden;
+}
+.panel-left-wrap { width: 0; }
+.panel-right-wrap { width: 0; }
+.panel-left-wrap.is-open { 
+  width: 300px; 
+  transition: width 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.panel-right-wrap.is-open { 
+  width: 300px; 
+  transition: width 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.panel-inner {
+  width: 300px;
+  height: 100%;
+  background: var(--bg-panel);
+}
+.panel-left-wrap .panel-inner {
+  border-width: 0 1px 0 0;
+}
+.panel-right-wrap .panel-inner {
+  border-width: 0 0 0 1px;
+}
+
+.panel-scroll {
+  height: 100%;
+  overflow: auto;
+  padding: 16px;
+}
+.panel-title {
+  display: flex;
+  align-items: center;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+}
+
+.center-wrap {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  justify-content: center;
+  background: var(--bg);
+}
+
+.chat-column {
+  width: 100%;
+  min-width: 0;
+  flex-direction: column;
+  height: 100%;
+  border-left: 1px solid transparent;
+  border-right: 1px solid transparent;
+  overflow: auto;
+  scroll-behavior: smooth;
+}
+
+.messages {
+  max-width: var(--chat-area-max-width);
+  margin: 0 auto;
+  flex: 1;
+  overflow-y: auto;
+  padding-top: 15px;
+  padding-left: 15px;
+  padding-right: 15px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-bottom: 90px;
+  min-height: calc(100vh - 170px);
+}
+
+ul.char-block{
+  max-width: 85%;
+  padding-left: 10px;
+  padding: 1px 0;
+}
+ul.char-block li{
+  margin: 1em 0;
+  padding-left: 15px;
+  border-left: 4px solid var(--border);
+  border-top-left-radius: 10px;
+  border-bottom-left-radius: 10px;
+}
+ul.char-block strong{
+  color: var(--accent);
+  font-weight: normal;
+}
+.bubble-row {
+  display: flex;
+  width: 100%;
+}
+.bubble-row.is-other { justify-content: flex-start; }
+.bubble-row.is-self { justify-content: flex-end; }
+.bubble {
+  padding: 10px 14px;
+  max-width: 85%;
+  border-radius: 27px;
+  line-height: 1.5;
+  font-size: 0.9375rem;
+  word-break: break-word;
+  position: relative;
+  margin: 1em 0;
+}
+.bubble-row.is-other .bubble {
+  background: var(--msg-other-bg);
+  border-bottom-left-radius: 4px;
+  display: inline-block;
+  margin: 0.5em 0;
+}
+.bubble-row.is-self .bubble {
+  background: var(--msg-self-bg);
+  border-bottom-right-radius: 4px;
+}
+.bubble-ul {
+  margin-left: 0;
+  padding-left: 0;
+  list-style: none;
+}
+.bubble p {
+  margin-top: 0;
+  margin-bottom: 0;
+  line-height: 1.5em;
+  margin-bottom: 0.3em;
+}
+
+.composer {
+  max-width: var(--chat-area-max-width);
+  margin: 0 auto;
+  flex-shrink: 0;
+  padding: 12px 14px 16px;
+  position: sticky;
+  bottom: 0;
+  background-color: var(--bg-panel);
+  border-top-left-radius: 15px;
+  border-top-right-radius: 15px;
+}
+.composer-inner {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.composer button.send {
+  flex-shrink: 0;
+  height: 50px;
+  width: 50px;
+  text-align: center;
+  line-height: 50px;
+  font-size: 13px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(120,120,120,0.05);
+  color: var(--text);
+  font-weight: 600;
+  cursor: pointer;
+}
+.composer button.send:hover {
+  filter: brightness(1.08);
+}
+
+.switch {
+  position: relative;
+  width: 40px;
+  height: 20px;
+  border-radius: 999px;
+  border: none;
+  background: var(--border);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background-color 0.2s;
+}
+.switch::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--bg-elevated);
+  box-shadow: 0 1px 3px var(--shadow);
+  transition: transform 0.2s;
+}
+
+
+.textarea-lite {
+  background-color: var(--input-bg);
+  border: 1px solid transparent;
+  border-bottom: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 5px 5px;
+  font: inherit;
+  color: var(--text);
+  min-height: 25px;
+  font-size: 13px;
+  line-height: 1.1em;
+  width: 100%;
+  resize: vertical;
+}
+.input-lite {
+  background-color: var(--input-bg);
+  border: 1px solid transparent;
+  border-bottom: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 5px 5px;
+  font: inherit;
+  color: var(--text);
+  line-height: 1.1em;
+  font-size: 13px;
+  width: 100%;
+}
+.textarea-lite:focus, 
+.input-lite:focus,
+input:focus,
+textarea:focus {
+  outline: none;
+  border: 1px solid var(--border);
+}
+
+
+.btn-lite {
+  background-color: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  padding: 3px 5px;
+  font: inherit;
+  line-height: 1.45;
+  color: var(--accent);
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+.btn-sm{
+  font-size: 12px;
+}
+.btn-lite:hover {
+  outline: none;
+  opacity: 0.8;
+}
+.btn-lite:active {
+  opacity: 1;
+}
+
+
+
+::-webkit-scrollbar {
+  width: 8px;
+  background-color: rgba(120,120,120,0.0);
+}
+::-webkit-scrollbar-thumb {
+  background-color: rgba(120,120,120,0.15);
+  border-radius: 5px;
+}
+*:hover::-webkit-scrollbar-thumb {
+  border-radius: 5px;
+}
+
+:root[data-theme="light"] .switch {
+  background: color-mix(in srgb, var(--text-muted) 45%, var(--border));
+}
+:root[data-theme="light"] .switch::after {
+  transform: translateX(20px);
+}
+:root[data-theme="dark"] .switch::after {
+  transform: translateX(0);
+}
+
+
+/* CSS custom properties cannot be used directly in @media conditions in current browsers. */
+@media (max-width: 768px) {
+  .panel-left-wrap,
+  .panel-right-wrap {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: auto;
+    z-index: 20;
+    pointer-events: none;
+  }
+
+  .panel-left-wrap {
+    left: 0;
+  }
+  .panel-right-wrap {
+    right: 0;
+  }
+
+  .panel-left-wrap .panel-inner,
+  .panel-right-wrap .panel-inner {
+    height: 100%;
+    transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .panel-left-wrap .panel-inner {
+    transform: translateX(-100%);
+  }
+  .panel-right-wrap .panel-inner {
+    transform: translateX(100%);
+  }
+
+  .panel-left-wrap.is-open,
+  .panel-right-wrap.is-open {
+    pointer-events: auto;
+  }
+
+  .panel-left-wrap.is-open .panel-inner,
+  .panel-right-wrap.is-open .panel-inner {
+    transform: translateX(0);
+  }
+}</style>
+</head>
+<body>
+  <div
+    class="app"
+    id="chat-app"
+    x-data="chatApp"
+    x-init="init()"
+    >
+    <header class="top-bar">
+
+      <!-- top left -->
+      <div>
+        <button
+          type="button"
+          class="corner-btn"
+          @click="leftOpen = !leftOpen"
+          :aria-pressed="leftOpen"
+          >
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <rect x="3" y="4" width="18" height="16" rx="2"/>
+            <path d="M9 4v16"/>
+          </svg>
+        </button>
+      </div>
+
+      <!-- top center -->
+      <div style="display: flex; align-items: center; margin: 0 auto;">
+        <h1 style="font-size: 16px; color: var(--text-muted); font-weight: bold; margin-right: 10px;">
+          costory 1.0 <span x-text="is_mobile ? '' : story_data._story_name_"></span>
+        </h1>
+      </div>
+
+      <!-- top right -->
+      <div>
+
+        <button
+          type="button"
+          class="corner-btn"
+          @click="rightOpen = !rightOpen"
+          :aria-pressed="rightOpen"
+        >
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <rect x="3" y="4" width="18" height="16" rx="2"/>
+            <path d="M15 4v16"/>
+          </svg>
+        </button>
+      </div>
+
+    </header>
+
+    <div class="shell">
+      <aside class="panel-left-wrap" :class="{ 'is-open': leftOpen }" :aria-hidden="!leftOpen">
+        <div class="panel-inner">
+          <div class="panel-scroll">
+            <div class="panel-title">
+              <span lang="zh">故事文档</span>
+              <span lang="en">Story Document</span>
+
+              <button class="btn-lite" style="margin-left: auto;" @click="loadStoryFile()">
+                <span lang="zh">载入故事</span>
+                <span lang="en">Load Story</span>
+              </button>
+
+              <button class="btn-lite" style="margin-left: 10px;" @click="saveStoryFile()">
+                <span lang="zh">保存故事</span>
+                <span lang="en">Save Story</span>
+              </button>
+            </div>
+            
+            <p>
+              <small>
+                <span lang="zh">故事名称</span>
+                <span lang="en">Story Name</span>
+              </small>
+              <textarea class="textarea-lite" x-model="story_data['_story_name_']" spellcheck="false" rows="1"></textarea>
+            </p>
+
+            <hr>
+            
+            <div>
+              <p>
+                <small>
+                  <span lang="zh">背景设定</span>
+                  <span lang="en">Background Setting</span>
+                </small>
+                <textarea class="textarea-lite" x-model="story_data.prompt_story_background" spellcheck="false" rows="5"></textarea>
+              </p>
+              <p>
+                <small>
+                  <span lang="zh">编剧风格</span>
+                  <span lang="en">Writer Style</span>
+                </small>
+                <textarea class="textarea-lite" x-model="story_data.prompt_story_style" spellcheck="false" rows="5"></textarea>
+              </p>
+              <p>
+                <small>
+                  <span lang="zh">序幕引言</span>
+                  <span lang="en">Prologue Leadin</span>
+                </small>
+                <textarea class="textarea-lite" x-model="story_data.prompt_story_prologue" spellcheck="false" rows="5"></textarea>
+              </p>
+              <p>
+                <small>
+                  <span lang="zh">玩家名称</span>
+                  <span lang="en">Player Name</span>
+                </small>
+                <textarea class="textarea-lite" x-model="story_data.prompt_story_player_name" spellcheck="false" rows="1"></textarea>
+              </p>
+              <p>
+                <small>
+                  <span lang="zh">玩家描述</span>
+                  <span lang="en">Player Description</span>
+                </small>
+                <textarea class="textarea-lite" x-model="story_data.prompt_story_player_desc" spellcheck="false" rows="5"></textarea>
+              </p>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <div class="center-wrap">
+        <main class="chat-column" x-ref="chatColumn">
+          <div class="messages" x-ref="msgBox">
+
+            <div style="padding-top: 30px; text-align: center;">
+              <span lang="zh">序幕引言</span>
+              <span lang="en">Prologue Leadin</span>
+            </div>
+
+            <div x-html="parseTextToHtmlLite(story_data.prompt_story_prologue)"></div>
+
+            <template x-for="(item,index) in chat_list" :key="index">
+
+              <div>
+                <!-- 用户消息 -->
+                <template x-if="item.role === 'user'">
+                  <div>
+                    <div class="bubble-row is-self">
+                      <div class="bubble">
+                        <p x-text="item.arr_content[0].name"></p>
+                        <div x-text="item.arr_content[0].text"></div>
+                      </div>
+                    </div>
+                    <template x-if="index >= chat_list.length - 2">
+                      <div style="display: flex;padding: 5px 0; height: 25px; margin-top: -15px">
+                        <small @click="unsendMsg()" style="margin-left: auto; cursor: default; color: var(--text-muted);">
+                          <span lang="zh">撤回最新互动</span>
+                          <span lang="en">Unsend Latest Interaction</span>
+                        </small>
+                      </div>
+                    </template>
+                  </div>
+                </template>
+
+                <!-- AI消息 -->
+                <template x-if="item.role !== 'user'">
+                  <div
+                    x-data="{
+                      novel: { voiceover: '', story_new: [], sum: '' },
+                      refreshNovel() {
+                        const srcText = item?.arr_content?.[0]?.text || '';
+                        this.novel = parseMarkdownToJson(srcText, cfg_game_markdown_to_json) || { voiceover: '', story_new: [], sum: '' };
+                      }
+                    }"
+                    x-init="refreshNovel()"
+                    x-effect="refreshNovel()"
+                  >
+
+                    <p x-html="novel.sum_submit || ''"></p>
+
+                    <!-- <template x-if="novel.the_screenwriter">
+                      <div x-html="novel.the_screenwriter" style="margin: 10px 0; color: var(--infor);"></div>
+                    </template> -->
+
+                    <template x-if="novel.sum_unreasonable">
+                      <div style="color: var(--infor);">
+                        <p style="color: var(--text);background-color: var(--infor);padding: 5px 10px; border-radius: 6px;">
+                          <span lang="zh"></span>🙂此等不合逻辑之行，AI不答应！此轮不计入历史剧情，重新互动试试</span>
+                          <span lang="en">🙂Unreasonable behavior, AI does not agree! This round is not counted in the history of the story, try again.</span>
+                        </p>
+                        <span x-html="novel.sum_unreasonable"></span>
+                      </div>
+                    </template>
+                    <!-- <p class="tip-dev">=> dev - story_structure：<small x-html="novel.story_structure || ''"></small></p> -->
+
+                    <template x-if="!novel.sum_unreasonable">                      
+                      <div>
+                        <p x-html="parseWordsHighlight(novel.voiceover) || ''"></p>
+                        <div class="bubble-row is-other">
+                          <ul class="char-block" style="width: 100%;">
+                            <template x-for="(role_item,idx) in (Array.isArray(novel.story_new) ? novel.story_new : [])" :key="idx">
+                              <li>
+                                <p x-text="role_item.name"></p>
+                                <div x-html="parseCharScriptToHtml(role_item.text)"></div>
+                              </li>
+                            </template>
+                          </ul>
+                        </div>
+                        <p x-html="parseWordsHighlight(novel.sum) || ''"></p>
+                      </div>
+
+                      <p class="tip-dev" x-html="novel.story_drive"></p>
+  
+                    </template>
+                    <!-- <p class="tip-dev">=> dev - story_location：<small x-html="novel.story_location"></small></p> -->
+                    <!-- <p class="tip-dev">=> dev - token_usage：<small x-html="item.token_usage"></small></p> -->
+                  </div>
+                </template>
+              </div>
+            </template>
+
+            <!-- loading -->
+            <template x-if="chat_status.status_pending || chat_status.status_streaming">
+              <svg width="32" height="8" viewBox="0 0 120 30" xmlns="http://www.w3.org/2000/svg" fill="var(--accent)">
+                <circle cx="15" cy="15" r="15">
+                  <animate attributeName="r" from="15" to="15" begin="0s" dur="0.8s" values="15;9;15" calcMode="linear"
+                    repeatCount="indefinite" />
+                  <animate attributeName="fill-opacity" from="1" to="1" begin="0s" dur="0.8s" values="1;.5;1" calcMode="linear"
+                    repeatCount="indefinite" />
+                </circle>
+                <circle cx="60" cy="15" r="9" fill-opacity="0.3">
+                  <animate attributeName="r" from="9" to="9" begin="0s" dur="0.8s" values="9;15;9" calcMode="linear"
+                    repeatCount="indefinite" />
+                  <animate attributeName="fill-opacity" from="0.5" to="0.5" begin="0s" dur="0.8s" values=".5;1;.5" calcMode="linear"
+                    repeatCount="indefinite" />
+                </circle>
+                <circle cx="105" cy="15" r="15">
+                  <animate attributeName="r" from="15" to="15" begin="0s" dur="0.8s" values="15;9;15" calcMode="linear"
+                    repeatCount="indefinite" />
+                  <animate attributeName="fill-opacity" from="1" to="1" begin="0s" dur="0.8s" values="1;.5;1" calcMode="linear"
+                    repeatCount="indefinite" />
+                </circle>
+              </svg>
+            </template>
+          </div>
+
+          <footer class="composer">
+            <div class="composer-inner">
+              <div style="display: flex;">
+
+                <input 
+                  type="text" 
+                  x-model="chat_form.name" 
+                  placeholder_zh="角色名…"
+                  placeholder_en="name…"
+                  class="input-lite"
+                  style="width: 150px; font-size: 13px; padding-left: 10px; margin-bottom: 5px;"
+                  spellcheck="false"
+                > 
+              </div>
+              <div style="position: relative;">
+
+                <div x-text="(story_data.prompt_text_story_location).split(/[，。、：,（]/)[0] || ''" style="position: sticky;
+                  position: absolute;
+                  top: 15px;
+                  right: 60px;
+                  text-align: center;
+                  opacity: 0.1;
+                  font-size: 42px;
+                  font-weight: bold;
+                  height: 70px;
+                  pointer-events: none;
+                "></div>
+                
+                <textarea
+                  class="textarea-lite"
+                  x-model="chat_form.text"
+                  style="min-height: 80px; max-height: 160px;font-size: 14px; padding-left: 10px;padding: 10px;"
+                  placeholder_zh="Shift+回车换行, 回车发送…"
+                  placeholder_en="Shift+Enter to line break, Enter to send…"
+                  @keydown.enter="
+                    if(!$event.ctrlKey && !$event.shiftKey){
+                      $event.preventDefault();
+                      sendMsg()
+                    }
+                  "
+                  spellcheck="false"
+                ></textarea>
+                <!-- <input 
+                  type="text" 
+                  x-model="story_data.prompt_text_to_screenwriter" 
+                  class="input-lite" 
+                  style="width: 100%; font-size: 14px; padding-left: 10px;"
+                  placeholder="与编剧沟通的…"
+                > -->
+                <button 
+                  type="submit" 
+                  class="send" 
+                  @click="sendMsg()"
+                  style="position:absolute; right:5px; bottom: 13px;"
+                  >
+                  <small>
+                    <span lang="zh">发送</span>
+                    <span lang="en">Send</span>
+                  </small>
+                </button>
+              </div>
+            </div>
+          </footer>
+        </main>
+      </div>
+
+      <aside class="panel-right-wrap" :class="{ 'is-open': rightOpen }" :aria-hidden="!rightOpen">
+        <div class="panel-inner">
+          <div class="panel-scroll">
+            <div class="panel-title">
+              <span>
+                <span lang="zh">故事进度</span>
+                <span lang="en">Story Progress</span>
+              </span>
+            </div>
+            
+            <div>
+              <div>
+                <small>
+                  <span lang="zh">历史剧情</span>
+                  <span lang="en">History Story</span>
+                </small>
+                <label>
+                  <div style="
+                    background-color: var(--input-bg);
+                    padding: 5px; 
+                    padding-bottom: 15px; 
+                    border-bottom: none; 
+                    margin-bottom: -10px; 
+                    border-top-left-radius: 10px; 
+                    border-top-right-radius: 10px;
+                    margin-top: 3px;
+                    ">
+                    <span x-text="story_data.prompt_story_prologue" style="font-size: 12px;"></span>
+                  </div>
+                  <textarea class="textarea-lite" x-model="story_data.prompt_text_history" spellcheck="false" rows="8"></textarea>
+                </label>
+              </div>
+              <p>
+                <small>
+                  <span lang="zh">当前场景</span>
+                  <span lang="en">Current Scene</span>
+                </small>
+                <textarea class="textarea-lite" x-model="story_data.prompt_text_story_location" spellcheck="false" rows="1"></textarea>
+              </p>
+              <p>
+                <small>
+                  <span lang="zh">在场角色</span>
+                  <span lang="en">On-site Characters</span>
+                </small>
+                <textarea class="textarea-lite" x-model="story_data.prompt_text_story_character" spellcheck="false" rows="1"></textarea>
+              </p>
+            </div>
+
+            <hr>
+            <div class="panel-title">
+              <span>
+                <span lang="zh">设置</span>
+                <span lang="en">Settings</span>
+              </span>
+            </div>
+            <p style="display: flex; align-items: center;">
+              <small>
+                <span lang="zh">切换明暗主题</span>
+                <span lang="en">Switch Light/Dark Theme</span>
+              </small>
+              <button 
+                type="button" 
+                class="switch" 
+                role="switch" 
+                :aria-checked="theme === 'light'" 
+                @click="toggleTheme()"
+                style="margin-left: auto;"
+              ></button>
+            </p>
+
+            <hr>
+            <div class="panel-title">
+              <span>
+                <span lang="zh">大模型提供商</span>
+                <span lang="en">LLM Provider</span>
+              </span>
+            </div>
+            <p>
+              <textarea 
+                class="textarea-lite" 
+                x-model.trim="cfg_llm.url" 
+                placeholder="api_url，eg.: https://openrouter.ai/api/v1/chat/completions" 
+                rows="3"
+                spellcheck="false"
+              ></textarea>
+              <input 
+                class="input-lite" 
+                type="text"
+                x-model.trim="cfg_llm.key" 
+                placeholder="api_key，eg.: sk-or-v1-......" 
+                spellcheck="false"
+              ></input>
+              <textarea 
+                class="textarea-lite" 
+                x-model.trim="cfg_llm.model" 
+                placeholder="model，eg.: google/gemini-2.5-flash" 
+                rows="1"
+                spellcheck="false"
+              ></textarea>
+              <p >
+                <template x-if="cfg_llm.url && cfg_llm.key && cfg_llm.model">
+                  <small>
+                    <span lang="zh">配置完毕，将使用此大模型提供商</span>
+                    <span lang="en">Done. LLM provider will work.</span>
+                  </small>
+                </template>
+              </p>
+            </p>
+
+          </div>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <!-- zh / en 语言切换 -->
+  <script>
+    /**
+    * 根据浏览器语言自动隐藏对应语言的元素
+    * 中文环境：隐藏所有 lang="en" 元素
+    * 非中文环境：隐藏所有 lang="zh" 元素
+    */
+    const is_app_lang_zh = (navigator.language || navigator.userLanguage).toLowerCase().startsWith('zh')
+    function autoHideLangElements() {
+      try {
+        // 1. 获取浏览器当前语言（兼容所有浏览器）
+        const browserLang = navigator.language || navigator.userLanguage;
+        // 判断是否为中文（包含 zh-CN / zh-TW / zh-HK 等所有中文环境）
+        const isChinese = browserLang.toLowerCase().startsWith('zh');
+
+        // 2. 拼接对应 CSS 样式
+        let cssStyle = '';
+        if (isChinese) {
+          // 中文环境：隐藏英文元素
+          cssStyle = '*[lang="en"] { display: none !important; }';
+
+          // 显示中文 placeholder
+          document.querySelectorAll('[placeholder_zh]').forEach(item => {
+            item.placeholder = item.getAttribute('placeholder_zh');
+          });
+        } else {
+          // 非中文环境：隐藏中文元素
+          cssStyle = '*[lang="zh"] { display: none !important; }';
+
+          // 显示英文 placeholder
+          document.querySelectorAll('[placeholder_en]').forEach(item => {
+            item.placeholder = item.getAttribute('placeholder_en');
+          });
+        }
+
+        // 3. 创建 style 标签并插入到 body 末尾
+        const styleTag = document.createElement('style');
+        styleTag.textContent = cssStyle;
+        document.body.appendChild(styleTag);
+
+      } catch (error) {
+        // 异常捕获，避免页面报错
+        console.warn('语言自动隐藏功能执行失败:', error);
+      }
+    }
+
+    // 页面加载完成后自动执行
+    window.addEventListener('DOMContentLoaded', autoHideLangElements);
+  </script>
+
+  <!-- 准备工具变量，如：is_mobile -->
+  <script>
+    const is_mobile = window.innerWidth < 768;
+  </script>
+
+  <!-- cfg_costory_key_map 故事书 key 映射 -->
+  <script>
+    const cfg_costory_key_map = {
+      "_background_setting_": "prompt_story_background",
+      "_writer_style_": "prompt_story_style",
+      "_prologue_leadin_": "prompt_story_prologue",
+      "_player_name_": "prompt_story_player_name",
+      "_player_desc_": "prompt_story_player_desc",
+    };
+  </script>
+
+  <!-- cfg_game_markdown_to_json 游戏剧本 Markdown 转换为 JSON 配置 -->
+  <script>
+    const cfg_game_markdown_to_json = [
+      // {
+      //   key: "the_screenwriter",
+      //   match_str: "## 0",
+      //   redata: (text) => {
+      //     return text?.length >= 7 ? text : '';
+      //   }
+      // },
+      {
+        key: "sum_submit",
+        match_str: "## 1"
+      },
+      {
+        key: "sum_unreasonable",
+        match_str: "## 2",
+        redata: (text) => {
+          return text?.length >= 7 ? text : '';
+        }
+      },
+      {
+        key: "story_structure",
+        match_str: "## 3"
+      },
+      {
+        key: "voiceover",
+        match_str: "## 4"
+      },
+      {
+        key: "story_new",
+        match_str: "## 5",
+        // 自定义处理函数：将列表文本解析为角色对话数组
+        redata: (markdownText) => {
+          // 1. 处理空值/空文本
+          if (!markdownText || typeof markdownText !== 'string') {
+            return [];
+          }
+
+          // 2. 按行分割文本，过滤空行和无效行
+          const lines = markdownText.split('\n').filter(line => line.trim().startsWith('-'));
+
+          // 3. 逐行解析
+          return lines.map(line => {
+            // 去除首尾空格和开头的 - 符号
+            const content = line.trim().replace(/\u003e/g, '>').replace(/\u003c/g, '<').replace(/^-\s*/, '');
+
+            // 正则匹配：“@姓名 =>” 对话内容 格式
+            const match = content.match(/@([^=]+)\s*=>\s*(.+)$/);
+
+            if (match) {
+              // 去除姓名和文本的多余空格，返回干净的对象
+              return {
+                name: match[1].trim(),
+                text: match[2].trim()
+              };
+            }
+
+            // 不匹配格式的行返回空对象（容错处理）
+            return { name: '', text: '' };
+          }).filter(item => item.name || item.text); // 过滤完全无效的项
+        }
+      },
+      {
+        key: "sum",
+        match_str: "## 6"
+      },
+      {
+        key: "story_drive",
+        match_str: "## 7",
+        redata: (text) => {
+          return text?.length >= 7 ? text : '';
+        }
+      },
+      {
+        key: "story_location",
+        match_str: "## 8"
+      },
+      {
+        key: "story_character",
+        match_str: "## 9"
+      },
+    ];
+  </script>
+  <!-- parseCharScriptToHtml 将角色对话脚本转换为 HTML 格式 -->
+  <script>
+    // 求证嵌套引号的函数
+    function fixQuotes(text) {
+      let result = '';
+      let depth = 0;
+
+      for (let i = 0; i < text.length; i++) {
+        const char = text[i];
+
+        if (char === '「') {
+          depth++;
+          if (depth === 1) {
+            result += '「'; // 外层保留
+          } else {
+            result += '"'; // 内层替换
+          }
+        } else if (char === '」') {
+          if (depth === 1) {
+            result += '」'; // 外层保留
+          } else {
+            result += '"'; // 内层替换
+          }
+          depth--;
+        } else {
+          result += char;
+        }
+      }
+
+      return result;
+    }
+    const parseCharScriptToHtml = (text) => {
+      let text_new =  text
+      text_new = fixQuotes(text_new)
+        .replace(/(“「)|(”」)/g, '「') // 修正错误
+        .replace(/(」”)|(”」)/g, '」') // 修正错误
+        .replace(/(「.+?(」|$))/g, '<div><p class="bubble">$1</p></div>') // 匹配到说话内容
+        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>') // 匹配到粗体
+        .replace(/\*\*(.*?)$/g, '<strong>$1</strong>') // 匹配到粗体
+        .replace(/\*(.*?)\*/g, '<em>$1</em>') // 匹配到斜体
+        .replace(/\*(.*?)$/g, '<em>$1</em>') // 匹配到斜体
+
+        .replace(/「|」/g, '') // 移除特殊引号
+        .replace(/『|』/g, ' ') // 移除特殊引号
+
+        .trim()
+      return text_new; 
+    }
+
+    // 简单文本转html，适用于“序幕引言”
+    const parseTextToHtmlLite = (text) => {
+      if(!text) return '';
+      let text_new =  text
+        .replace(/\n{2,}/g, '<br><br>')
+        .replace(/\n/g, '<br>')
+        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>') // 匹配到粗体
+        .replace(/\*(.*?)\*/g, '<em>$1</em>') // 匹配到斜体
+        .trim()
+      return text_new;
+    }
+  </script>
+
+  <!-- parseWordsHighlight 角色话本高亮词 -->
+  <script>
+    // 内置高亮词
+    const arr_words_highlight = [...arr_keywords_line_words, ...arr_keywords_emotion]
+    const parseWordsHighlight = (text) => {
+      if(!text) return '';
+      for (const word of arr_words_highlight) {
+        text = text.replace(
+          new RegExp(`(${word})`, ''), 
+          '<span class="word-highlight">$1</span>'
+        );
+      }
+      return text;
+    }
+  </script>
+
+  <!-- parseMarkdownToJson 将 Markdown 文本根据配置转换为 JSON 对象 -->
+  <script>
+
+    /**
+   * 将 Markdown 文本根据配置转换为 JSON 对象
+   * @param {string} markdown - markdown 原始字符串
+   * @param {Array} config - 转换配置数组
+   * @returns {object} 转换后的 JSON 对象
+   */
+    function parseMarkdownToJson(markdown, config) {
+
+      // 预处理 markdown 格式
+      markdown = markdown
+        .trim()
+        .replace(/(^`{1,3})|(`{1,3}$)/g, '') // 去除首尾反引号
+        .replace(/(##)(?=[^\s])/g, '$1 ') // 标题“##”后无空格的，自动修正袖中动补充空格
+        .replace(/-(\S{1,10})@/g, '- $1@') // 列表“- @”里“角色”名后缺少空格的，加空格
+        .replace(/(?=[^\n])(- @)/g, '\n$1') // 列表“- @”前缺少换行的，加换行符
+        .replace(/## {0,}/g, '\n## ') // 标题“##”后多空格的，自动修正为单空格
+        .replace(/##/g, '\n##') // 标题“##”前加换行
+        .replace(/(>>>)(?=[^\s])/g, '$1\n') // 标题以>>>结尾，自动修正补充换行
+        .replace(/\n{2,}/g, '\n\n') // 2个以上换行的，只保留2个换行符
+        .replace(/<\$>/g, '') // 去除自定义休止符<$>
+        .trim(/#{1,2}\s{0,2}$/, '') // 去除标题末尾的 # (文本未结束时后续的标题)
+        .trim(/-\s{0,2}$/, '') // 去除标题末尾的 - (文本未结束时后续的列表)
+        .trim()
+      
+      // 1. 按 ## 分割 markdown 文本，过滤空内容
+      const blocks = markdown.split(/^## /gm).filter(block => block.trim() !== '');
+
+      // 2. 格式化数据块：提取标题和内容
+      const markdownBlocks = blocks.map(block => {
+        // 按换行符分割，第一行是标题，剩余是内容
+        const lines = block.split('\n');
+        const title = `## ${lines[0].trim()}`; // 补回 ##
+        const content = lines.slice(1).join('\n').trim();
+        return { title, content };
+      });
+
+      // 3. 根据配置匹配并生成结果
+      const result = {};
+      config.forEach(item => {
+        const { key, match_str, redata } = item;
+        if (!key || !match_str) return; // 跳过无效配置
+
+        // 查找匹配的数据块（indexOf(match_str) === 0）
+        const targetBlock = markdownBlocks.find(block =>
+          block.title.indexOf(match_str) === 0
+        );
+
+        if (targetBlock) {
+          let value = targetBlock.content;
+          // 如果配置了 redata 函数，执行数据处理
+          if (typeof redata === 'function') {
+            value = redata(value);
+          }
+          result[key] = value;
+        }
+      });
+
+      return result;
+    }
+  
+  </script>
+
+  <!-- whenStreamDone 流式输出完成时回调函数 -->
+  <script>
+    // 标记单次会话是否自动重新发送剧情
+    let mark_auto_resend = false;
+    function whenStreamDone(chunk_obj) {
+
+      let res_json = parseMarkdownToJson(chunk_obj.text_all, cfg_game_markdown_to_json);
+      console.log('res_json:');
+      console.log(res_json);
+
+      // 如果提交脚本被拒绝，直接终止剧本解析
+      if (res_json?.sum_unreasonable?.trim().length >= 7) {
+        return;
+      }
+
+      // 判断新剧情顺利生成否
+      if(!res_json?.sum && !mark_auto_resend){
+        my_ai_chat_easy.rollbackLastChat();
+        setTimeout(() => {
+          console.log('auto - resend')
+          my_alpine_app.sendMsg();
+        }, 100);
+      }
+
+      // 追加新剧情到历史剧情
+      let text_append = '';
+      const prompt_text_user_submit = my_alpine_app.story_data.prompt_text_user_submit;
+      text_append += `${my_alpine_app.story_data.prompt_text_history ? '\n' : ''}\n---\n${prompt_text_user_submit}\n=> ${res_json?.sum?.trim()}`
+      if (!text_append) {
+        my_ai_chat_easy.rollbackLastChat();
+        return;
+      }
+      if (res_json?.story_drive?.trim().length >= 10) {
+        text_append += `\n=> ${res_json?.story_drive?.trim()}`
+      }
+      my_alpine_app.story_data.prompt_text_history += text_append;
+
+      // 更新地点
+      my_alpine_app.story_data.prompt_text_story_location = res_json?.story_location?.trim() || '';
+      my_alpine_app.story_data.prompt_text_story_character = res_json?.story_character?.trim() || '';
+
+      // 标记高亮词
+      const target_chat_obj_item = my_alpine_app.chat_list[my_alpine_app.chat_list.length - 1]
+      target_chat_obj_item.arr_content[0].text = parseWordsHighlight(target_chat_obj_item.arr_content[0].text)
+
+      // 重置自动重新发送剧情标记
+      mark_auto_resend = false;
+    }
+  </script>
+
+  <!-- whenStreamError 流式输出错误时回调函数 -->
+  <script>
+    const whenStreamError = (error) => {
+      console.log('dev: whenStreamError() - error:');
+      console.log(error);
+    }
+  </script>
+
+  <!-- kk_ai_chat_easy 基础聊天对话对象 -->
+  <script>
+    window.my_ai_chat_easy = new kk_ai_chat_easy({
+      'post_url': 'https://reroutehub.payism.online/',
+      'post_body': {
+        "cfg_url": "https://openrouter.ai/api/v1/chat/completions",
+        "cfg_method": "POST",
+        "cfg_is_stream": true,
+        "cfg_body": {
+          "model": 'google/gemini-2.5-flash',
+          "stream": true,
+        },
+        "cfg_headers": {
+          'Authorization': 'Bearer {{costory}}',
+          'Content-Type': 'application/json',
+        },
+      },
+      'init_ui_el_scroll_to_bottom_on_send': '.chat-column',
+      'is_use_default_stream_unpack_method': true,
+      'fn_callbackOnDone': whenStreamDone,
+      'fn_callbackOnError': whenStreamError,
+    })
+  </script>
+
+  <!-- 默认故事书 -->
+  <script>
+    let default_costory_text = '';
+    const default_costory_text_zh = `
+# costory 1.0 >>>
+more: https://costory.online
+
+## _背景设定_ >>>
+背景设定沿袭和套用：**直接沿用游戏《原神》的世界观和主要人物**。
+
+## _编剧风格_ >>>
+文风轻松，提瓦特大陆尽显神秘感与历史感。
+
+## _序幕引言_ >>>
+提瓦特的夜空中流星划过（飞船着陆），望舒客栈后院正是流行降落之处，少年睁开了眼睛...
+
+## _玩家名称_ >>>
+旅行者
+
+## _故事名称_ >>>
+原神世界
+`
+    const default_costory_text_en = `
+## _background_setting_ >>>
+The background setting is inherited and adopted: **directly follow the worldview and main characters of the game Genshin Impact**.
+
+## _writer_style_ >>>
+The writing tone is relaxed, presenting Teyvat with a strong sense of mystery and historical depth.
+
+## _prologue_leadin_ >>>
+Shooting stars streak across the night sky of Teyvat (spaceship landing). The backyard of Wangshu Inn serves as the perfect landing spot. A young man slowly opens his eyes...
+
+## _player_name_ >>>
+Traveler
+
+## _story_name_ >>>
+World of Genshin Impact
+`
+
+    let default_prompt_template = '';
+    const default_prompt_template_zh = `
+现在，你是文字互动游戏的AI编剧，带入合适角色来回应已提交的角色互动。
+作为编剧，你最看重交互逻辑，回应时按行为逻辑启用和切换角色、场景、剧情。
+行文中的人称指代，必须直接用角色名称。
+
+我与你约定：
+- 休止符“<$>”为最高优先级，你的输出文本一旦触发“<$>”无理由终止输出。
+- 「...」为说话内容，有严格的单组闭合结构，不能嵌套使用。“...”为普通引用，使用时分清类型。
+
+【交互格式】提交与回应时，核心的交互格式：
+- @{角色名} => 「说话内容**关键词**」行为动作**心理**等简述，「**关键**说话内容」**关键**行为动作等简述。
+【交互实例】：
+- @张三 => 「你好XXX我是张三。」嘴角**微微上扬**，「希望下回可以见识你的“重大发明”。」转身**离开**。
+
+【背景设定】架空设定、世界观、价值观、环境设定、或角色设定等：
+{{...prompt_story_background}}
+
+{{prompt_story_player_desc??
+【角色描述】关键角色的特点和信息补充：
+{...prompt_story_player_desc}
+}}
+
+【编剧风格】行文风格与要求，满足想象力趣味性角色行为逻辑的基础上仍需：
+{{...prompt_story_style}}
+
+【历史剧情】出场角色行动逻辑的基础：
+{{...prompt_story_prologue}}
+{{prompt_text_history??{...prompt_text_history}}}
+以上内容不参与“互动剧情总结”。
+
+【场景地点】：
+{{prompt_text_story_location??{...prompt_text_story_location}::（待你总结）}}
+
+【在场角色】：
+{{prompt_text_story_character??{...prompt_text_story_character}::（待你总结）}}
+
+【提交角色】从此以下加入“互动剧情总结”：
+{{...prompt_text_user_submit}}
+
+合“编剧风格”，优选最适角色回应互动（默认1角色出场，小概率适合精彩多人剧情是可多角色），
+现在按模板输出（标题括号内容无需保留，遇到“<$>”则回答完毕并立即终止输出）
+
+## 1、提交概括 >>>
+{一句话，旁白口吻概括“提交角色”的**关键**剧情}
+
+## 2、提交角色不合行为逻辑（不合逻辑的攻击杀人、违背世界观设定如科幻背景中出现魔法、伤亡角色没有恨意等） >>>
+{无|一两句话纯文本，编剧以“我”的口吻，喊话提交角色，或吐槽或骂骂咧咧或嘲笑，点出其行为不合逻辑之处，明确拒绝无效行为并给出行为建议，输出模板休止符“<$>”。}
+
+## 3、剧情架构 >>>
+- “提交角色”包含：{角色名}；
+- 符合逻辑的回应剧情：{一句话描述最合适的其他单一角色的后续剧情}；
+- 回应剧情含角色：（不能与提交角色重复）{角色名|不含角色仅时间或场景描写}。
+
+## 4、旁白 >>>
+{一句话旁白，从简，场景或客观环境描写，对**关键**剧情推进、转折、反转等有重要作用。}
+
+## 5、互动剧情（基于上述剧情架构，排除提交角色） >>>
+- @{角色名} => {对话内容动作行为心理等等}
+- ...（若需多角色出场）
+
+## 6、互动剧情总结（信息化概括你输出的角色的剧情信息无格式文本）>>>
+{流水账式依次提炼总结}
+
+## 7、剧情跳跃（默认“无”，当以上互动剧情包含：意图引荐新角色、意图前往新地点场景时） >>>
+{无|一句话点明互动剧情发展后的切换场景（新角色、新地点、新时间，如：不一会，A与B到了XX地点，C正站在门口。）}
+
+## 8、最新场景地点（原场景地点或切换后的场景地点） >>>
+{一个词点名场景地点}
+
+## 9、最新在场角色（目前在场角色，或切换场景后的在场角色，排除提交的角色） >>>
+{角色名（可用空格隔开，最后互动的角色排最前）}
+\`\`\`
+`
+    const default_prompt_template_en = `
+Now, you are the AI screenwriter of a text interactive game, and respond to the submitted character interactions by embodying appropriate roles.
+As a screenwriter, you place the highest priority on interaction logic. When responding, activate and switch roles, scenes, and plots in accordance with behavioral logic.
+All personal pronouns in the text must directly use character names.
+
+Agreements between you and me:
+- The rest symbol "<$>" has the highest priority. Once your output triggers "<$>", terminate the output without reason.
+-「...」is used for spoken content with a strict single-group closed structure and cannot be nested. "..." serves as a common quotation mark; distinguish their usage clearly.
+
+【Interaction Format】The core interaction format for submission and response:
+- @{Character Name} => 「Spoken content **key words**」brief description of actions **mentality**,「**key** spoken content」brief description of **key** actions and more.
+【Interaction Example】:
+- @Zhang San => 「Hello XXX, I am Zhang San.」The corners of his mouth lift **slightly**,「I hope to see your "great invention" next time.」He turns around and **leaves**.
+
+【Background Setting】Fictional settings, worldviews, values, environmental settings, character settings and more:
+{{...prompt_story_background}}
+
+{{prompt_story_player_desc??
+【Character Description】Supplementary features and information of key characters:
+{...prompt_story_player_desc}
+}}
+
+【Screenwriting Style】Writing styles and requirements. On the premise of satisfying imagination, fun and character behavioral logic, you shall also comply with:
+{{...prompt_story_style}}
+
+【Historical Plot】The basis for the action logic of appearing characters:
+{{...prompt_story_prologue}}
+{{prompt_text_history??{...prompt_text_history}}}
+The above content shall not be included in the "interactive plot summary".
+
+【Scene Location】:
+{{prompt_text_story_location??{...prompt_text_story_location}::(To be summarized by you)}}
+
+【Present Characters】:
+{{prompt_text_story_character??{...prompt_text_story_character}::(To be summarized by you)}}
+
+【Submitting Character】Add the "interactive plot summary" below this line:
+{{...prompt_text_user_submit}}
+
+Conform to the "screenwriting style", and select the most suitable character to respond to the interaction (one character appears by default; multiple characters are allowed for wonderful plots on rare occasions).
+Now output in accordance with the template (retain no content in parentheses of titles; end the response immediately and stop output once "<$>" appears).
+
+## 1. Submission Overview >>>
+{One sentence in a narrator's tone to summarize the **key** plot of the submitting character}
+
+## 2. Illogical Behaviors of Submitting Character >>>
+{None | One or two plain-text sentences. As the screenwriter speaking in the first-person "I", address the submitting character with complaints, teasing or sarcasm, point out the illogical part of the behavior, explicitly reject invalid actions and offer behavioral suggestions, and end with the rest symbol "<$>".}
+
+## 3. Plot Structure >>>
+- Submitting character involved: {Character Name};
+- Logical follow-up plot: {One sentence describing the subsequent plot of the most suitable single other character};
+- Characters in responsive plot: (Must not duplicate the submitting character) {Character Name | Only time or scene description with no characters}.
+
+## 4. Narration >>>
+{One concise sentence of narration depicting the scene or objective environment, playing a vital role in advancing, diverting or reversing the key plot.}
+
+## 5. Interactive Plot (Based on the above plot structure, excluding the submitting character) >>>
+- @{Character Name} => {Dialogues, actions, behaviors, mental activities and other details}
+- ...(Add more lines if multiple characters appear)
+
+## 6. Interactive Plot Summary >>>
+{Chronological and straightforward summary of the character plot information in your output with plain text}
+
+## 7. Plot Transition >>>
+{None by default; fill in one sentence to clarify scene switching after the interaction if the plot involves introducing new characters or moving to new locations (new characters, new places, new time, e.g.: Moments later, A and B arrive at XX, with C standing at the gate.)}
+
+## 8. Latest Scene Location >>>
+{One word to specify the current or switched scene location}
+
+## 9. Latest Present Characters >>>
+{Character names separated by spaces; the last interacting character comes first, excluding the submitting character}    
+`
+  
+    if(is_app_lang_zh) {
+      default_costory_text = default_costory_text_zh;
+      default_prompt_template = default_prompt_template_zh;
+    } else {
+      default_costory_text = default_costory_text_en;
+      default_prompt_template = default_prompt_template_en;
+    }
+  </script>
+
+  <!-- kk_ai_chat_collapse 基础剧情对话对象 -->
+  <script>
+    window.my_ai_chat_collapse = kk_ai_chat_collapse({
+      'the_template': default_prompt_template,
+      'the_data_for_template': {
+        // 'prompt_text_to_screenwriter': '',
+        'prompt_story_background': '',
+        'prompt_story_style': '',
+        'prompt_story_prologue': '',
+        'prompt_story_player_name': '',
+        'prompt_story_player_desc': '',
+        'prompt_text_history': '',
+        'prompt_text_story_location': '',
+        'prompt_text_story_character': '',
+        'prompt_text_user_submit': '',
+        "_story_name_": '',
+      },
+    })
+  </script>
+
+  <!-- my_alpine_app 主应用对象 -->
+  <script>
+    window.my_alpine_app = null
+
+    document.addEventListener('alpine:init', () => {
+      // 初始化 chat_form 中 name 字段
+      my_ai_chat_easy.store_char_chat.chat_form.name = ''
+      // 手动数据绑定
+      my_ai_chat_easy.store_char_chat = Alpine.reactive(my_ai_chat_easy.store_char_chat);
+      my_ai_chat_collapse.the_data_for_template = Alpine.reactive(my_ai_chat_collapse.the_data_for_template);
+
+      my_ai_chat_easy.status_pending = false;
+      Alpine.data('chatApp', () => ({
+
+        // app
+        leftOpen: is_mobile ? false : true,
+        rightOpen: is_mobile ? false : true,
+        theme: 'dark',
+
+        // 大模型提供商
+        cfg_llm: {
+          url: "",
+          key: "",
+          model: "",
+        },
+
+        // data
+        get chat_status() {
+          return {
+            'status_pending': my_ai_chat_easy.store_char_chat.status_pending,
+            'status_streaming': my_ai_chat_easy.store_char_chat.status_streaming,
+          };
+        },
+        get chat_list() {
+          return my_ai_chat_easy.store_char_chat.chat_list;
+        },
+        get chat_form() {
+          return my_ai_chat_easy.store_char_chat.chat_form;
+        },
+        get story_data() {
+          return my_ai_chat_collapse.the_data_for_template;
+        },
+
+        // tools
+        parseMarkdownToJson: parseMarkdownToJson,
+        cfg_game_markdown_to_json: cfg_game_markdown_to_json,
+        parseCharScriptToHtml: parseCharScriptToHtml,
+
+        applyTheme() {
+          document.documentElement.setAttribute('data-theme', this.theme);
+        },
+
+        toggleTheme() {
+          this.theme = this.theme === 'dark' ? 'light' : 'dark';
+        },
+
+        sendMsg() {
+
+          if(new Date().getMonth() + 1 !== 4) {
+            return;
+          }
+
+          if(
+            this.chat_form.name.trim() === '' ||
+            this.chat_form.text.trim() === ''
+          ) {
+            iToast.push('请设定角色名称 ➕ 演绎互动剧情');
+            return;
+          }
+
+          if(
+            this.chat_status.status_pending ||
+            this.chat_status.status_streaming
+          ) {
+            iToast.push('等等');
+            return;
+          }
+
+          this.old_user_chat_obj = {
+            name: this.chat_form.name,
+            text: this.chat_form.text,
+          };
+          
+          // 更新用户新输入剧情到
+          this.story_data.prompt_text_user_submit = `- @${this.chat_form.name} => ${this.chat_form.text}`;
+          
+          // 压缩对话（对当前发送的对话分词，用这组分词比对每一个历史段落，如果命中重合，则保留，否则抛弃）
+          const story_data_compressed = JSON.parse(JSON.stringify(this.story_data));
+          let arr_prompt_text_history = story_data_compressed.prompt_text_history.split('---');
+          let arr_user_chat_current = easySegment(this.chat_form.text);
+          arr_prompt_text_history = arr_prompt_text_history.filter((item_text, idx) => {
+            const mark = 
+              idx <= 2 || 
+              arr_prompt_text_history.length - idx <= 2 ||
+              arr_user_chat_current.find(word => item_text.indexOf(word) >= 0);
+            if(!mark){
+              console.log(`抛弃历史段落 ${idx + 1}/${arr_prompt_text_history.length} - item_text:`);
+              console.log(item_text);
+            }
+            return mark
+          })
+          story_data_compressed.prompt_text_history = arr_prompt_text_history.join('---')
+
+          console.log('story_data_compressed:');
+          console.log(story_data_compressed);
+
+          const messages = [
+            {
+              'role': 'system',
+              'content': my_ai_chat_collapse.run( story_data_compressed ),
+            },
+          ]
+
+          console.log('sendMsg - messages:');
+          console.log(messages);
+          
+          // 触发AI对话
+          const post_obj = {
+            'messages': messages,
+          }
+
+          // 触发AI对话
+          const is_custom_llm = this.cfg_llm.url && this.cfg_llm.key && this.cfg_llm.model;
+          if(is_custom_llm) {
+            post_obj["model"] = this.cfg_llm.model;
+          }
+          my_ai_chat_easy.fetchStream(
+            post_obj,
+            is_custom_llm ? this.cfg_llm.url : undefined,
+            is_custom_llm ? {
+              'Authorization': `Bearer ${this.cfg_llm.key}`,
+              'Content-Type': 'application/json',
+            } : undefined,
+          );
+
+          this.chat_form.text = '';
+        },
+
+        unsendMsg() {
+
+          if(this.chat_status.status_pending || this.chat_status.status_streaming) {
+            return;
+          }
+
+          my_ai_chat_easy.rollbackLastChat();
+          const arr = this.story_data.prompt_text_history.split('---');
+          arr.pop();
+          this.story_data.prompt_text_history = arr.join('---');
+        },
+        
+        init() {
+          const app_this = this;
+
+          const saved = localStorage.getItem('app-theme');
+          if (saved === 'light' || saved === 'dark') {
+            this.theme = saved;
+          }
+          this.applyTheme();
+          this.$watch('theme', () => {
+            localStorage.setItem('app-theme', this.theme);
+            this.applyTheme();
+          });
+          
+          console.log('dev: is_app_lang_zh:', is_app_lang_zh);
+
+          // 暴露给全局
+          window.my_alpine_app = this;
+          
+          let mark_story_load_success = false;
+          // 首先尝试载入 url 参数中的故事书
+          const url_costory_text = markdown_tool_for_url.getMarkdownFromUrl('costory_text');
+          try {
+            if (url_costory_text && !mark_story_load_success) {
+              const costory_text = markdown_tool_for_url.parseUrlParamStringToMarkdown(url_costory_text);
+              this.loadStoryFile(costory_text);
+
+              mark_story_load_success = true;
+            }
+          } catch {
+            console.log('载入 url 参数中的 (key: \'costory_text\') 失败，略过载入url参数');
+          }
+
+          // 其次尝试载入 localStorage 中的 costory 文档 (key: 'current_costory_json')
+          const current_costory_json = localStorage.getItem('kk_current_costory_text_or_json');
+          try{
+            if (current_costory_json && !mark_story_load_success) {
+  
+              console.log('dev: init() - load localStorage.current_costory_json:');
+              console.log(current_costory_json);
+  
+              let json = null;
+              try {
+                json =JSON.parse(current_costory_json)
+              } catch {
+                json = costory.parseMarkdownToJson(current_costory_json);
+              }
+
+              costory.happyAfterLoad(cfg_costory_key_map, this.story_data, json);
+              this.chat_form.name = json._player_name_ || '';
+
+              mark_story_load_success = true;
+            }
+          }catch{
+            console.log('载入 localStorage 中的 (key: \'kk_current_costory_text_or_json\') 失败，略过载入localStorage');
+          }
+          
+          // 如果 localStorage 和 url 都未载入故事书，则载入内置默认故事书
+          console.log(app_this)
+          console.log(app_this.story_data);
+          console.log(app_this.story_data.prompt_story_background);
+
+          if(app_this.story_data.prompt_story_background === '') {
+            app_this.loadStoryFile(default_costory_text);
+          }
+
+          // 载入 localStorage 中的 大模型提供商配置 (key: 'kk_current_cfg_llm')
+          const current_cfg_llm = localStorage.getItem('kk_current_cfg_llm');
+          try{
+            if (current_cfg_llm) {
+              const json = JSON.parse(current_cfg_llm);
+              this.cfg_llm = json;
+            }
+          }catch{
+            console.log('载入 localStorage 中的 (key: \'kk_current_cfg_llm\') 失败，略过载入localStorage');
+          }
+
+          //watch
+          this.$watch('cfg_llm', (newVal) => {
+            localStorage.setItem('kk_current_cfg_llm', JSON.stringify(newVal));
+          });
+          this.$watch('story_data', (newVal) => {
+            const { json: costory_json } = costory.happyBeforeSave(cfg_costory_key_map, this.story_data);
+            if(JSON.stringify(costory_json) !== JSON.stringify(this.story_data)) {
+              localStorage.setItem('kk_current_costory_text_or_json', JSON.stringify(costory_json));
+            }
+          });
+
+        },
+        
+        async loadStoryFile(costory_text) {
+          let costory_json = null
+          if(costory_text) {
+            costory_json = costory.parseMarkdownToJson(costory_text);
+          } else {
+            costory_json = await costory.loadFile();
+          }
+          costory.happyAfterLoad(cfg_costory_key_map, this.story_data, costory_json);
+
+          this.chat_form.name = costory_json._player_name_ || '';
+
+          console.log('dev: init() -loadStoryFile - costory_json:');
+          console.log(costory_json);
+
+          // 本地保存最新故事文件
+          localStorage.setItem('kk_current_costory_text_or_json', JSON.stringify(costory_json));
+        },
+
+        saveStoryFile() {
+          const {json: costory_json} = costory.happyBeforeSave(cfg_costory_key_map, this.story_data);
+          costory.saveFile(costory_json);
+
+          // 本地保存最新故事文件
+          // localStorage.setItem('kk_current_costory_text_or_json', JSON.stringify(costory_json));
+        }
+      }));
+
+    });
+  </script>
+
+  <!--  -->
+</body>
+
+<script defer>(()=>{var ee=!1,re=!1,W=[],ne=-1,ie=!1;function Ve(t){Dn(t)}function Ue(){ie=!0}function qe(){ie=!1,We()}function Dn(t){W.includes(t)||W.push(t),We()}function Ke(t){let e=W.indexOf(t);e!==-1&&e>ne&&W.splice(e,1)}function We(){if(!re&&!ee){if(ie)return;ee=!0,queueMicrotask(In)}}function In(){ee=!1,re=!0;for(let t=0;t<W.length;t++)W[t](),ne=t;W.length=0,ne=-1,re=!1}var C,R,j,se,oe=!0;function Ge(t){oe=!1,t(),oe=!0}function Je(t){C=t.reactive,j=t.release,R=e=>t.effect(e,{scheduler:r=>{oe?Ve(r):r()}}),se=t.raw}function ae(t){R=t}function Ye(t){let e=()=>{};return[n=>{let i=R(n);return t._x_effects||(t._x_effects=new Set,t._x_runEffects=()=>{t._x_effects.forEach(o=>o())}),t._x_effects.add(i),e=()=>{i!==void 0&&(t._x_effects.delete(i),j(i))},i},()=>{e()}]}function St(t,e){let r=!0,n,i,o=R(()=>{let s=t(),a=JSON.stringify(s);if(!r&&(typeof s=="object"||s!==n)){let c=typeof n=="object"?JSON.parse(i):n;queueMicrotask(()=>{e(s,c)})}n=s,i=a,r=!1});return()=>j(o)}async function Xe(t){Ue();try{await t(),await Promise.resolve()}finally{qe()}}var Ze=[],Qe=[],tr=[];function er(t){tr.push(t)}function et(t,e){typeof e=="function"?(t._x_cleanups||(t._x_cleanups=[]),t._x_cleanups.push(e)):(e=t,Qe.push(e))}function At(t){Ze.push(t)}function Ot(t,e,r){t._x_attributeCleanups||(t._x_attributeCleanups={}),t._x_attributeCleanups[e]||(t._x_attributeCleanups[e]=[]),t._x_attributeCleanups[e].push(r)}function ce(t,e){t._x_attributeCleanups&&Object.entries(t._x_attributeCleanups).forEach(([r,n])=>{(e===void 0||e.includes(r))&&(n.forEach(i=>i()),delete t._x_attributeCleanups[r])})}function rr(t){for(t._x_effects?.forEach(Ke);t._x_cleanups?.length;)t._x_cleanups.pop()()}var le=new MutationObserver(pe),ue=!1;function ut(){le.observe(document,{subtree:!0,childList:!0,attributes:!0,attributeOldValue:!0}),ue=!0}function fe(){kn(),le.disconnect(),ue=!1}var lt=[];function kn(){let t=le.takeRecords();lt.push(()=>t.length>0&&pe(t));let e=lt.length;queueMicrotask(()=>{if(lt.length===e)for(;lt.length>0;)lt.shift()()})}function m(t){if(!ue)return t();fe();let e=t();return ut(),e}var de=!1,vt=[];function nr(){de=!0}function ir(){de=!1,pe(vt),vt=[]}function pe(t){if(de){vt=vt.concat(t);return}let e=[],r=new Set,n=new Map,i=new Map;for(let o=0;o<t.length;o++)if(!t[o].target._x_ignoreMutationObserver&&(t[o].type==="childList"&&(t[o].removedNodes.forEach(s=>{s.nodeType===1&&s._x_marker&&r.add(s)}),t[o].addedNodes.forEach(s=>{if(s.nodeType===1){if(r.has(s)){r.delete(s);return}s._x_marker||e.push(s)}})),t[o].type==="attributes")){let s=t[o].target,a=t[o].attributeName,c=t[o].oldValue,l=()=>{n.has(s)||n.set(s,[]),n.get(s).push({name:a,value:s.getAttribute(a)})},u=()=>{i.has(s)||i.set(s,[]),i.get(s).push(a)};s.hasAttribute(a)&&c===null?l():s.hasAttribute(a)?(u(),l()):u()}i.forEach((o,s)=>{ce(s,o)}),n.forEach((o,s)=>{Ze.forEach(a=>a(s,o))});for(let o of r)e.some(s=>s.contains(o))||Qe.forEach(s=>s(o));for(let o of e)o.isConnected&&tr.forEach(s=>s(o));e=null,r=null,n=null,i=null}function Ct(t){return P(F(t))}function N(t,e,r){return t._x_dataStack=[e,...F(r||t)],()=>{t._x_dataStack=t._x_dataStack.filter(n=>n!==e)}}function F(t){return t._x_dataStack?t._x_dataStack:typeof ShadowRoot=="function"&&t instanceof ShadowRoot?F(t.host):t.parentNode?F(t.parentNode):[]}function P(t){return new Proxy({objects:t},$n)}function or(t,e){return t===null||t===Object.prototype?null:Object.prototype.hasOwnProperty.call(t,e)?t:or(Object.getPrototypeOf(t),e)}var $n={ownKeys({objects:t}){return Array.from(new Set(t.flatMap(e=>Object.keys(e))))},has({objects:t},e){return e==Symbol.unscopables?!1:t.some(r=>Object.prototype.hasOwnProperty.call(r,e)||Reflect.has(r,e))},get({objects:t},e,r){return e=="toJSON"?Ln:Reflect.get(t.find(n=>Reflect.has(n,e))||{},e,r)},set({objects:t},e,r,n){let i;for(let s of t)if(i=or(s,e),i)break;i||(i=t[t.length-1]);let o=Object.getOwnPropertyDescriptor(i,e);return o?.set&&o?.get?o.set.call(n,r)||!0:Reflect.set(i,e,r)}};function Ln(){return Reflect.ownKeys(this).reduce((e,r)=>(e[r]=Reflect.get(this,r),e),{})}function rt(t){let e=n=>typeof n=="object"&&!Array.isArray(n)&&n!==null,r=(n,i="")=>{Object.entries(Object.getOwnPropertyDescriptors(n)).forEach(([o,{value:s,enumerable:a}])=>{if(a===!1||s===void 0||typeof s=="object"&&s!==null&&s.__v_skip)return;let c=i===""?o:`${i}.${o}`;typeof s=="object"&&s!==null&&s._x_interceptor?n[o]=s.initialize(t,c,o):e(s)&&s!==n&&!(s instanceof Element)&&r(s,c)})};return r(t)}function Tt(t,e=()=>{}){let r={initialValue:void 0,_x_interceptor:!0,initialize(n,i,o){return t(this.initialValue,()=>jn(n,i),s=>me(n,i,s),i,o)}};return e(r),n=>{if(typeof n=="object"&&n!==null&&n._x_interceptor){let i=r.initialize.bind(r);r.initialize=(o,s,a)=>{let c=n.initialize(o,s,a);return r.initialValue=c,i(o,s,a)}}else r.initialValue=n;return r}}function jn(t,e){return e.split(".").reduce((r,n)=>r[n],t)}function me(t,e,r){if(typeof e=="string"&&(e=e.split(".")),e.length===1)t[e[0]]=r;else{if(e.length===0)throw error;return t[e[0]]||(t[e[0]]={}),me(t[e[0]],e.slice(1),r)}}var sr={};function x(t,e){sr[t]=e}function H(t,e){let r=Fn(e);return Object.entries(sr).forEach(([n,i])=>{Object.defineProperty(t,`$${n}`,{get(){return i(e,r)},enumerable:!1})}),t}function Fn(t){let[e,r]=he(t),n={interceptor:Tt,...e};return et(t,r),n}function ar(t,e,r,...n){try{return r(...n)}catch(i){nt(i,t,e)}}function nt(...t){return cr(...t)}var cr=Bn;function lr(t){cr=t}function Bn(t,e,r=void 0){t=Object.assign(t??{message:"No error message given."},{el:e,expression:r}),console.warn(`Alpine Expression Error: ${t.message}
+
+${r?'Expression: "'+r+`"
+
+`:""}`,e),setTimeout(()=>{throw t},0)}var it=!0;function Mt(t){let e=it;it=!1;let r=t();return it=e,r}function T(t,e,r={}){let n;return _(t,e)(i=>n=i,r),n}function _(...t){return ur(...t)}var ur=()=>{};function fr(t){ur=t}var dr;function pr(t){dr=t}function mr(t,e){let r={};H(r,t);let n=[r,...F(t)],i=typeof e=="function"?zn(n,e):Vn(n,e,t);return ar.bind(null,t,e,i)}function zn(t,e){return(r=()=>{},{scope:n={},params:i=[],context:o}={})=>{if(!it){ft(r,e,P([n,...t]),i);return}let s=e.apply(P([n,...t]),i);ft(r,s)}}var _e={};function Hn(t,e){if(_e[t])return _e[t];let r=Object.getPrototypeOf(async function(){}).constructor,n=/^[\n\s]*if.*\(.*\)/.test(t.trim())||/^(let|const)\s/.test(t.trim())?`(async()=>{ ${t} })()`:t,o=(()=>{try{let s=new r(["__self","scope"],`with (scope) { __self.result = ${n} }; __self.finished = true; return __self.result;`);return Object.defineProperty(s,"name",{value:`[Alpine] ${t}`}),s}catch(s){return nt(s,e,t),Promise.resolve()}})();return _e[t]=o,o}function Vn(t,e,r){let n=Hn(e,r);return(i=()=>{},{scope:o={},params:s=[],context:a}={})=>{n.result=void 0,n.finished=!1;let c=P([o,...t]);if(typeof n=="function"){let l=n.call(a,n,c).catch(u=>nt(u,r,e));n.finished?(ft(i,n.result,c,s,r),n.result=void 0):l.then(u=>{ft(i,u,c,s,r)}).catch(u=>nt(u,r,e)).finally(()=>n.result=void 0)}}}function ft(t,e,r,n,i){if(it&&typeof e=="function"){let o=e.apply(r,n);o instanceof Promise?o.then(s=>ft(t,s,r,n)).catch(s=>nt(s,i,e)):t(o)}else typeof e=="object"&&e instanceof Promise?e.then(o=>t(o)):t(e)}function hr(...t){return dr(...t)}function _r(t,e,r={}){let n={};H(n,t);let i=[n,...F(t)],o=P([r.scope??{},...i]),s=r.params??[];if(e.includes("await")){let a=Object.getPrototypeOf(async function(){}).constructor,c=/^[\n\s]*if.*\(.*\)/.test(e.trim())||/^(let|const)\s/.test(e.trim())?`(async()=>{ ${e} })()`:e;return new a(["scope"],`with (scope) { let __result = ${c}; return __result }`).call(r.context,o)}else{let a=/^[\n\s]*if.*\(.*\)/.test(e.trim())||/^(let|const)\s/.test(e.trim())?`(()=>{ ${e} })()`:e,l=new Function(["scope"],`with (scope) { let __result = ${a}; return __result }`).call(r.context,o);return typeof l=="function"&&it?l.apply(o,s):l}}var ye="x-";function O(t=""){return ye+t}function gr(t){ye=t}var Rt={};function p(t,e){return Rt[t]=e,{before(r){if(!Rt[r]){console.warn(String.raw`Cannot find directive \`${r}\`. \`${t}\` will use the default order of execution`);return}let n=G.indexOf(r);G.splice(n>=0?n:G.indexOf("DEFAULT"),0,t)}}}function xr(t){return Object.keys(Rt).includes(t)}function pt(t,e,r){if(e=Array.from(e),t._x_virtualDirectives){let o=Object.entries(t._x_virtualDirectives).map(([a,c])=>({name:a,value:c})),s=be(o);o=o.map(a=>s.find(c=>c.name===a.name)?{name:`x-bind:${a.name}`,value:`"${a.value}"`}:a),e=e.concat(o)}let n={};return e.map(wr((o,s)=>n[o]=s)).filter(Sr).map(qn(n,r)).sort(Kn).map(o=>Un(t,o))}function be(t){return Array.from(t).map(wr()).filter(e=>!Sr(e))}var ge=!1,dt=new Map,yr=Symbol();function br(t){ge=!0;let e=Symbol();yr=e,dt.set(e,[]);let r=()=>{for(;dt.get(e).length;)dt.get(e).shift()();dt.delete(e)},n=()=>{ge=!1,r()};t(r),n()}function he(t){let e=[],r=a=>e.push(a),[n,i]=Ye(t);return e.push(i),[{Alpine:B,effect:n,cleanup:r,evaluateLater:_.bind(_,t),evaluate:T.bind(T,t)},()=>e.forEach(a=>a())]}function Un(t,e){let r=()=>{},n=Rt[e.type]||r,[i,o]=he(t);Ot(t,e.original,o);let s=()=>{t._x_ignore||t._x_ignoreSelf||(n.inline&&n.inline(t,e,i),n=n.bind(n,t,e,i),ge?dt.get(yr).push(n):n())};return s.runCleanups=o,s}var Nt=(t,e)=>({name:r,value:n})=>(r.startsWith(t)&&(r=r.replace(t,e)),{name:r,value:n}),Pt=t=>t;function wr(t=()=>{}){return({name:e,value:r})=>{let{name:n,value:i}=Er.reduce((o,s)=>s(o),{name:e,value:r});return n!==e&&t(n,e),{name:n,value:i}}}var Er=[];function ot(t){Er.push(t)}function Sr({name:t}){return vr().test(t)}var vr=()=>new RegExp(`^${ye}([^:^.]+)\\b`);function qn(t,e){return({name:r,value:n})=>{r===n&&(n="");let i=r.match(vr()),o=r.match(/:([a-zA-Z0-9\-_:]+)/),s=r.match(/\.[^.\]]+(?=[^\]]*$)/g)||[],a=e||t[r]||r;return{type:i?i[1]:null,value:o?o[1]:null,modifiers:s.map(c=>c.replace(".","")),expression:n,original:a}}}var xe="DEFAULT",G=["ignore","ref","data","id","anchor","bind","init","for","model","modelable","transition","show","if",xe,"teleport"];function Kn(t,e){let r=G.indexOf(t.type)===-1?xe:t.type,n=G.indexOf(e.type)===-1?xe:e.type;return G.indexOf(r)-G.indexOf(n)}function J(t,e,r={},n={}){return t.dispatchEvent(new CustomEvent(e,{detail:r,bubbles:!0,composed:!0,cancelable:!0,...n}))}function D(t,e){if(typeof ShadowRoot=="function"&&t instanceof ShadowRoot){Array.from(t.children).forEach(i=>D(i,e));return}let r=!1;if(e(t,()=>r=!0),r)return;let n=t.firstElementChild;for(;n;)D(n,e,!1),n=n.nextElementSibling}function E(t,...e){console.warn(`Alpine Warning: ${t}`,...e)}var Ar=!1;function Or(){Ar&&E("Alpine has already been initialized on this page. Calling Alpine.start() more than once can cause problems."),Ar=!0,document.body||E("Unable to initialize. Trying to load Alpine before `<body>` is available. Did you forget to add `defer` in Alpine's `<script>` tag?"),J(document,"alpine:init"),J(document,"alpine:initializing"),ut(),er(e=>S(e,D)),et(e=>I(e)),At((e,r)=>{pt(e,r).forEach(n=>n())});let t=e=>!Y(e.parentElement,!0);Array.from(document.querySelectorAll(Mr().join(","))).filter(t).forEach(e=>{S(e)}),J(document,"alpine:initialized"),setTimeout(()=>{Gn()})}var we=[],Cr=[];function Tr(){return we.map(t=>t())}function Mr(){return we.concat(Cr).map(t=>t())}function Dt(t){we.push(t)}function It(t){Cr.push(t)}function Y(t,e=!1){return A(t,r=>{if((e?Mr():Tr()).some(i=>r.matches(i)))return!0})}function A(t,e){if(t){if(e(t))return t;if(t._x_teleportBack)return A(t._x_teleportBack,e);if(t.parentNode instanceof ShadowRoot)return A(t.parentNode.host,e);if(t.parentElement)return A(t.parentElement,e)}}function Rr(t){return Tr().some(e=>t.matches(e))}var Nr=[];function Pr(t){Nr.push(t)}var Wn=1;function S(t,e=D,r=()=>{}){A(t,n=>n._x_ignore)||br(()=>{e(t,(n,i)=>{n._x_marker||(r(n,i),Nr.forEach(o=>o(n,i)),pt(n,n.attributes).forEach(o=>o()),n._x_ignore||(n._x_marker=Wn++),n._x_ignore&&i())})})}function I(t,e=D){e(t,r=>{rr(r),ce(r),delete r._x_marker})}function Gn(){[["ui","dialog",["[x-dialog], [x-popover]"]],["anchor","anchor",["[x-anchor]"]],["sort","sort",["[x-sort]"]]].forEach(([e,r,n])=>{xr(r)||n.some(i=>{if(document.querySelector(i))return E(`found "${i}", but missing ${e} plugin`),!0})})}var Ee=[],Se=!1;function st(t=()=>{}){return queueMicrotask(()=>{Se||setTimeout(()=>{kt()})}),new Promise(e=>{Ee.push(()=>{t(),e()})})}function kt(){for(Se=!1;Ee.length;)Ee.shift()()}function Dr(){Se=!0}function mt(t,e){return Array.isArray(e)?Ir(t,e.join(" ")):typeof e=="object"&&e!==null?Jn(t,e):typeof e=="function"?mt(t,e()):Ir(t,e)}function ve(t){return t.split(/\s/).filter(Boolean)}function Ir(t,e){let r=i=>ve(i).filter(o=>!t.classList.contains(o)).filter(Boolean),n=i=>(t.classList.add(...i),()=>{t.classList.remove(...i)});return e=e===!0?e="":e||"",n(r(e))}function Jn(t,e){let r=Object.entries(e).flatMap(([s,a])=>a?ve(s):!1).filter(Boolean),n=Object.entries(e).flatMap(([s,a])=>a?!1:ve(s)).filter(Boolean),i=[],o=[];return n.forEach(s=>{t.classList.contains(s)&&(t.classList.remove(s),o.push(s))}),r.forEach(s=>{t.classList.contains(s)||(t.classList.add(s),i.push(s))}),()=>{o.forEach(s=>t.classList.add(s)),i.forEach(s=>t.classList.remove(s))}}function X(t,e){return typeof e=="object"&&e!==null?Yn(t,e):Xn(t,e)}function Yn(t,e){let r={};return Object.entries(e).forEach(([n,i])=>{r[n]=t.style[n],n.startsWith("--")||(n=Zn(n)),t.style.setProperty(n,i)}),setTimeout(()=>{t.style.length===0&&t.removeAttribute("style")}),()=>{X(t,r)}}function Xn(t,e){let r=t.getAttribute("style",e);return t.setAttribute("style",e),()=>{t.setAttribute("style",r||"")}}function Zn(t){return t.replace(/([a-z])([A-Z])/g,"$1-$2").toLowerCase()}function ht(t,e=()=>{}){let r=!1;return function(){r?e.apply(this,arguments):(r=!0,t.apply(this,arguments))}}p("transition",(t,{value:e,modifiers:r,expression:n},{evaluate:i})=>{typeof n=="function"&&(n=i(n)),n!==!1&&(!n||typeof n=="boolean"?ti(t,r,e):Qn(t,n,e))});function Qn(t,e,r){kr(t,mt,""),{enter:i=>{t._x_transition.enter.during=i},"enter-start":i=>{t._x_transition.enter.start=i},"enter-end":i=>{t._x_transition.enter.end=i},leave:i=>{t._x_transition.leave.during=i},"leave-start":i=>{t._x_transition.leave.start=i},"leave-end":i=>{t._x_transition.leave.end=i}}[r](e)}function ti(t,e,r){kr(t,X);let n=!e.includes("in")&&!e.includes("out")&&!r,i=n||e.includes("in")||["enter"].includes(r),o=n||e.includes("out")||["leave"].includes(r);e.includes("in")&&!n&&(e=e.filter((w,tt)=>tt<e.indexOf("out"))),e.includes("out")&&!n&&(e=e.filter((w,tt)=>tt>e.indexOf("out")));let s=!e.includes("opacity")&&!e.includes("scale"),a=s||e.includes("opacity"),c=s||e.includes("scale"),l=a?0:1,u=c?_t(e,"scale",95)/100:1,f=_t(e,"delay",0)/1e3,b=_t(e,"origin","center"),g="opacity, transform",L=_t(e,"duration",150)/1e3,d=_t(e,"duration",75)/1e3,y="cubic-bezier(0.4, 0.0, 0.2, 1)";i&&(t._x_transition.enter.during={transformOrigin:b,transitionDelay:`${f}s`,transitionProperty:g,transitionDuration:`${L}s`,transitionTimingFunction:y},t._x_transition.enter.start={opacity:l,transform:`scale(${u})`},t._x_transition.enter.end={opacity:1,transform:"scale(1)"}),o&&(t._x_transition.leave.during={transformOrigin:b,transitionDelay:`${f}s`,transitionProperty:g,transitionDuration:`${d}s`,transitionTimingFunction:y},t._x_transition.leave.start={opacity:1,transform:"scale(1)"},t._x_transition.leave.end={opacity:l,transform:`scale(${u})`})}function kr(t,e,r={}){t._x_transition||(t._x_transition={enter:{during:r,start:r,end:r},leave:{during:r,start:r,end:r},in(n=()=>{},i=()=>{}){$t(t,e,{during:this.enter.during,start:this.enter.start,end:this.enter.end},n,i)},out(n=()=>{},i=()=>{}){$t(t,e,{during:this.leave.during,start:this.leave.start,end:this.leave.end},n,i)}})}window.Element.prototype._x_toggleAndCascadeWithTransitions=function(t,e,r,n){let i=document.visibilityState==="visible"?requestAnimationFrame:setTimeout,o=()=>i(r);if(e){t._x_transition&&(t._x_transition.enter||t._x_transition.leave)?t._x_transition.enter&&(Object.entries(t._x_transition.enter.during).length||Object.entries(t._x_transition.enter.start).length||Object.entries(t._x_transition.enter.end).length)?t._x_transition.in(r):o():t._x_transition?t._x_transition.in(r):o();return}t._x_hidePromise=t._x_transition?new Promise((s,a)=>{t._x_transition.out(()=>{},()=>s(n)),t._x_transitioning&&t._x_transitioning.beforeCancel(()=>a({isFromCancelledTransition:!0}))}):Promise.resolve(n),queueMicrotask(()=>{let s=$r(t);s?(s._x_hideChildren||(s._x_hideChildren=[]),s._x_hideChildren.push(t)):i(()=>{let a=c=>{let l=Promise.all([c._x_hidePromise,...(c._x_hideChildren||[]).map(a)]).then(([u])=>u?.());return delete c._x_hidePromise,delete c._x_hideChildren,l};a(t).catch(c=>{if(!c.isFromCancelledTransition)throw c})})})};function $r(t){let e=t.parentNode;if(e)return e._x_hidePromise?e:$r(e)}function $t(t,e,{during:r,start:n,end:i}={},o=()=>{},s=()=>{}){if(t._x_transitioning&&t._x_transitioning.cancel(),Object.keys(r).length===0&&Object.keys(n).length===0&&Object.keys(i).length===0){o(),s();return}let a,c,l;ei(t,{start(){a=e(t,n)},during(){c=e(t,r)},before:o,end(){a(),l=e(t,i)},after:s,cleanup(){c(),l()}})}function ei(t,e){let r,n,i,o=ht(()=>{m(()=>{r=!0,n||e.before(),i||(e.end(),kt()),e.after(),t.isConnected&&e.cleanup(),delete t._x_transitioning})});t._x_transitioning={beforeCancels:[],beforeCancel(s){this.beforeCancels.push(s)},cancel:ht(function(){for(;this.beforeCancels.length;)this.beforeCancels.shift()();o()}),finish:o},m(()=>{e.start(),e.during()}),Dr(),requestAnimationFrame(()=>{if(r)return;let s=Number(getComputedStyle(t).transitionDuration.replace(/,.*/,"").replace("s",""))*1e3,a=Number(getComputedStyle(t).transitionDelay.replace(/,.*/,"").replace("s",""))*1e3;s===0&&(s=Number(getComputedStyle(t).animationDuration.replace("s",""))*1e3),m(()=>{e.before()}),n=!0,requestAnimationFrame(()=>{r||(m(()=>{e.end()}),kt(),setTimeout(t._x_transitioning.finish,s+a),i=!0)})})}function _t(t,e,r){if(t.indexOf(e)===-1)return r;let n=t[t.indexOf(e)+1];if(!n||e==="scale"&&isNaN(n))return r;if(e==="duration"||e==="delay"){let i=n.match(/([0-9]+)ms/);if(i)return i[1]}return e==="origin"&&["top","right","left","center","bottom"].includes(t[t.indexOf(e)+2])?[n,t[t.indexOf(e)+2]].join(" "):n}var k=!1;function v(t,e=()=>{}){return(...r)=>k?e(...r):t(...r)}function Lr(t){return(...e)=>k&&t(...e)}var jr=[];function V(t){jr.push(t)}function Fr(t,e){jr.forEach(r=>r(t,e)),k=!0,zr(()=>{S(e,(r,n)=>{n(r,()=>{})})}),k=!1}var Lt=!1;function Br(t,e){e._x_dataStack||(e._x_dataStack=t._x_dataStack),k=!0,Lt=!0,zr(()=>{ri(e)}),k=!1,Lt=!1}function ri(t){let e=!1;S(t,(n,i)=>{D(n,(o,s)=>{if(e&&Rr(o))return s();e=!0,i(o,s)})})}function zr(t){let e=R;ae((r,n)=>{let i=e(r);return j(i),()=>{}}),t(),ae(e)}function gt(t,e,r,n=[]){switch(t._x_bindings||(t._x_bindings=C({})),t._x_bindings[e]=r,e=n.includes("camel")?ui(e):e,e){case"value":ni(t,r);break;case"style":oi(t,r);break;case"class":ii(t,r);break;case"selected":case"checked":si(t,e,r);break;default:Hr(t,e,r);break}}function ni(t,e){if(jt(t))t.attributes.value===void 0&&(t.value=e);else if(yt(t))Number.isInteger(e)?t.value=e:!Array.isArray(e)&&typeof e!="boolean"&&![null,void 0].includes(e)?t.value=String(e):Array.isArray(e)?t.checked=e.some(r=>fi(r,t.value)):t.checked=!!e;else if(t.tagName==="SELECT")li(t,e);else{if(t.value===e)return;t.value=e===void 0?"":e}}function ii(t,e){t._x_undoAddedClasses&&t._x_undoAddedClasses(),t._x_undoAddedClasses=mt(t,e)}function oi(t,e){t._x_undoAddedStyles&&t._x_undoAddedStyles(),t._x_undoAddedStyles=X(t,e)}function si(t,e,r){Hr(t,e,r),ci(t,e,r)}function Hr(t,e,r){[null,void 0,!1].includes(r)&&pi(e)?t.removeAttribute(e):(Vr(e)&&(r=e),ai(t,e,r))}function ai(t,e,r){t.getAttribute(e)!=r&&t.setAttribute(e,r)}function ci(t,e,r){t[e]!==r&&(t[e]=r)}function li(t,e){let r=[].concat(e).map(n=>n+"");Array.from(t.options).forEach(n=>{n.selected=r.includes(n.value)})}function ui(t){return t.toLowerCase().replace(/-(\w)/g,(e,r)=>r.toUpperCase())}function fi(t,e){return t==e}function xt(t){return[1,"1","true","on","yes",!0].includes(t)?!0:[0,"0","false","off","no",!1].includes(t)?!1:t?Boolean(t):null}var di=new Set(["allowfullscreen","async","autofocus","autoplay","checked","controls","default","defer","disabled","formnovalidate","inert","ismap","itemscope","loop","multiple","muted","nomodule","novalidate","open","playsinline","readonly","required","reversed","selected","shadowrootclonable","shadowrootdelegatesfocus","shadowrootserializable"]);function Vr(t){return di.has(t)}function pi(t){return!["aria-pressed","aria-checked","aria-expanded","aria-selected"].includes(t)}function Ur(t,e,r){return t._x_bindings&&t._x_bindings[e]!==void 0?t._x_bindings[e]:Kr(t,e,r)}function qr(t,e,r,n=!0){if(t._x_bindings&&t._x_bindings[e]!==void 0)return t._x_bindings[e];if(t._x_inlineBindings&&t._x_inlineBindings[e]!==void 0){let i=t._x_inlineBindings[e];return i.extract=n,Mt(()=>T(t,i.expression))}return Kr(t,e,r)}function Kr(t,e,r){let n=t.getAttribute(e);return n===null?typeof r=="function"?r():r:n===""?!0:Vr(e)?!![e,"true"].includes(n):n}function yt(t){return t.type==="checkbox"||t.localName==="ui-checkbox"||t.localName==="ui-switch"}function jt(t){return t.type==="radio"||t.localName==="ui-radio"}function Ft(t,e){let r;return function(){let n=this,i=arguments,o=function(){r=null,t.apply(n,i)};clearTimeout(r),r=setTimeout(o,e)}}function Bt(t,e){let r;return function(){let n=this,i=arguments;r||(t.apply(n,i),r=!0,setTimeout(()=>r=!1,e))}}function zt({get:t,set:e},{get:r,set:n}){let i=!0,o,s,a=R(()=>{let c=t(),l=r();if(i)n(Ae(c)),i=!1;else{let u=JSON.stringify(c),f=JSON.stringify(l);u!==o?n(Ae(c)):u!==f&&e(Ae(l))}o=JSON.stringify(t()),s=JSON.stringify(r())});return()=>{j(a)}}function Ae(t){return typeof t=="object"?JSON.parse(JSON.stringify(t)):t}function Wr(t){(Array.isArray(t)?t:[t]).forEach(r=>r(B))}var Z={},Gr=!1;function Jr(t,e){if(Gr||(Z=C(Z),Gr=!0),e===void 0)return Z[t];Z[t]=e,rt(Z[t]),typeof e=="object"&&e!==null&&e.hasOwnProperty("init")&&typeof e.init=="function"&&Z[t].init()}function Yr(){return Z}var Xr={};function Zr(t,e){let r=typeof e!="function"?()=>e:e;return t instanceof Element?Oe(t,r()):(Xr[t]=r,()=>{})}function Qr(t){return Object.entries(Xr).forEach(([e,r])=>{Object.defineProperty(t,e,{get(){return(...n)=>r(...n)}})}),t}function Oe(t,e,r){let n=[];for(;n.length;)n.pop()();let i=Object.entries(e).map(([s,a])=>({name:s,value:a})),o=be(i);return i=i.map(s=>o.find(a=>a.name===s.name)?{name:`x-bind:${s.name}`,value:`"${s.value}"`}:s),pt(t,i,r).map(s=>{n.push(s.runCleanups),s()}),()=>{for(;n.length;)n.pop()()}}var tn={};function en(t,e){tn[t]=e}function rn(t,e){return Object.entries(tn).forEach(([r,n])=>{Object.defineProperty(t,r,{get(){return(...i)=>n.bind(e)(...i)},enumerable:!1})}),t}var mi={get reactive(){return C},get release(){return j},get effect(){return R},get raw(){return se},get transaction(){return Xe},version:"3.15.11",flushAndStopDeferringMutations:ir,dontAutoEvaluateFunctions:Mt,disableEffectScheduling:Ge,startObservingMutations:ut,stopObservingMutations:fe,setReactivityEngine:Je,onAttributeRemoved:Ot,onAttributesAdded:At,closestDataStack:F,skipDuringClone:v,onlyDuringClone:Lr,addRootSelector:Dt,addInitSelector:It,setErrorHandler:lr,interceptClone:V,addScopeToNode:N,deferMutations:nr,mapAttributes:ot,evaluateLater:_,interceptInit:Pr,initInterceptors:rt,injectMagics:H,setEvaluator:fr,setRawEvaluator:pr,mergeProxies:P,extractProp:qr,findClosest:A,onElRemoved:et,closestRoot:Y,destroyTree:I,interceptor:Tt,transition:$t,setStyles:X,mutateDom:m,directive:p,entangle:zt,throttle:Bt,debounce:Ft,evaluate:T,evaluateRaw:hr,initTree:S,nextTick:st,prefixed:O,prefix:gr,plugin:Wr,magic:x,store:Jr,start:Or,clone:Br,cloneNode:Fr,bound:Ur,$data:Ct,watch:St,walk:D,data:en,bind:Zr},B=mi;function Ce(t,e){let r=Object.create(null),n=t.split(",");for(let i=0;i<n.length;i++)r[n[i]]=!0;return e?i=>!!r[i.toLowerCase()]:i=>!!r[i]}var hi="itemscope,allowfullscreen,formnovalidate,ismap,nomodule,novalidate,readonly";var qs=Ce(hi+",async,autofocus,autoplay,controls,default,defer,disabled,hidden,loop,open,required,reversed,scoped,seamless,checked,muted,multiple,selected");var nn=Object.freeze({}),Ks=Object.freeze([]);var _i=Object.prototype.hasOwnProperty,bt=(t,e)=>_i.call(t,e),U=Array.isArray,at=t=>on(t)==="[object Map]";var gi=t=>typeof t=="string",Ht=t=>typeof t=="symbol",wt=t=>t!==null&&typeof t=="object";var xi=Object.prototype.toString,on=t=>xi.call(t),Te=t=>on(t).slice(8,-1);var Vt=t=>gi(t)&&t!=="NaN"&&t[0]!=="-"&&""+parseInt(t,10)===t;var Ut=t=>{let e=Object.create(null);return r=>e[r]||(e[r]=t(r))},yi=/-(\w)/g,Ws=Ut(t=>t.replace(yi,(e,r)=>r?r.toUpperCase():"")),bi=/\B([A-Z])/g,Gs=Ut(t=>t.replace(bi,"-$1").toLowerCase()),Me=Ut(t=>t.charAt(0).toUpperCase()+t.slice(1)),Js=Ut(t=>t?`on${Me(t)}`:""),Re=(t,e)=>t!==e&&(t===t||e===e);var Ne=new WeakMap,Et=[],$,Q=Symbol("iterate"),Pe=Symbol("Map key iterate");function wi(t){return t&&t._isEffect===!0}function fn(t,e=nn){wi(t)&&(t=t.raw);let r=Si(t,e);return e.lazy||r(),r}function dn(t){t.active&&(pn(t),t.options.onStop&&t.options.onStop(),t.active=!1)}var Ei=0;function Si(t,e){let r=function(){if(!r.active)return t();if(!Et.includes(r)){pn(r);try{return Ai(),Et.push(r),$=r,t()}finally{Et.pop(),mn(),$=Et[Et.length-1]}}};return r.id=Ei++,r.allowRecurse=!!e.allowRecurse,r._isEffect=!0,r.active=!0,r.raw=t,r.deps=[],r.options=e,r}function pn(t){let{deps:e}=t;if(e.length){for(let r=0;r<e.length;r++)e[r].delete(t);e.length=0}}var ct=!0,Ie=[];function vi(){Ie.push(ct),ct=!1}function Ai(){Ie.push(ct),ct=!0}function mn(){let t=Ie.pop();ct=t===void 0?!0:t}function M(t,e,r){if(!ct||$===void 0)return;let n=Ne.get(t);n||Ne.set(t,n=new Map);let i=n.get(r);i||n.set(r,i=new Set),i.has($)||(i.add($),$.deps.push(i),$.options.onTrack&&$.options.onTrack({effect:$,target:t,type:e,key:r}))}function K(t,e,r,n,i,o){let s=Ne.get(t);if(!s)return;let a=new Set,c=u=>{u&&u.forEach(f=>{(f!==$||f.allowRecurse)&&a.add(f)})};if(e==="clear")s.forEach(c);else if(r==="length"&&U(t))s.forEach((u,f)=>{(f==="length"||f>=n)&&c(u)});else switch(r!==void 0&&c(s.get(r)),e){case"add":U(t)?Vt(r)&&c(s.get("length")):(c(s.get(Q)),at(t)&&c(s.get(Pe)));break;case"delete":U(t)||(c(s.get(Q)),at(t)&&c(s.get(Pe)));break;case"set":at(t)&&c(s.get(Q));break}let l=u=>{u.options.onTrigger&&u.options.onTrigger({effect:u,target:t,key:r,type:e,newValue:n,oldValue:i,oldTarget:o}),u.options.scheduler?u.options.scheduler(u):u()};a.forEach(l)}var Oi=Ce("__proto__,__v_isRef,__isVue"),hn=new Set(Object.getOwnPropertyNames(Symbol).map(t=>Symbol[t]).filter(Ht)),Ci=_n();var Ti=_n(!0);var sn=Mi();function Mi(){let t={};return["includes","indexOf","lastIndexOf"].forEach(e=>{t[e]=function(...r){let n=h(this);for(let o=0,s=this.length;o<s;o++)M(n,"get",o+"");let i=n[e](...r);return i===-1||i===!1?n[e](...r.map(h)):i}}),["push","pop","shift","unshift","splice"].forEach(e=>{t[e]=function(...r){vi();let n=h(this)[e].apply(this,r);return mn(),n}}),t}function _n(t=!1,e=!1){return function(n,i,o){if(i==="__v_isReactive")return!t;if(i==="__v_isReadonly")return t;if(i==="__v_raw"&&o===(t?e?qi:bn:e?Ui:yn).get(n))return n;let s=U(n);if(!t&&s&&bt(sn,i))return Reflect.get(sn,i,o);let a=Reflect.get(n,i,o);return(Ht(i)?hn.has(i):Oi(i))||(t||M(n,"get",i),e)?a:De(a)?!s||!Vt(i)?a.value:a:wt(a)?t?wn(a):Xt(a):a}}var Ri=Ni();function Ni(t=!1){return function(r,n,i,o){let s=r[n];if(!t&&(i=h(i),s=h(s),!U(r)&&De(s)&&!De(i)))return s.value=i,!0;let a=U(r)&&Vt(n)?Number(n)<r.length:bt(r,n),c=Reflect.set(r,n,i,o);return r===h(o)&&(a?Re(i,s)&&K(r,"set",n,i,s):K(r,"add",n,i)),c}}function Pi(t,e){let r=bt(t,e),n=t[e],i=Reflect.deleteProperty(t,e);return i&&r&&K(t,"delete",e,void 0,n),i}function Di(t,e){let r=Reflect.has(t,e);return(!Ht(e)||!hn.has(e))&&M(t,"has",e),r}function Ii(t){return M(t,"iterate",U(t)?"length":Q),Reflect.ownKeys(t)}var ki={get:Ci,set:Ri,deleteProperty:Pi,has:Di,ownKeys:Ii},$i={get:Ti,set(t,e){return console.warn(`Set operation on key "${String(e)}" failed: target is readonly.`,t),!0},deleteProperty(t,e){return console.warn(`Delete operation on key "${String(e)}" failed: target is readonly.`,t),!0}};var ke=t=>wt(t)?Xt(t):t,$e=t=>wt(t)?wn(t):t,Le=t=>t,Yt=t=>Reflect.getPrototypeOf(t);function qt(t,e,r=!1,n=!1){t=t.__v_raw;let i=h(t),o=h(e);e!==o&&!r&&M(i,"get",e),!r&&M(i,"get",o);let{has:s}=Yt(i),a=n?Le:r?$e:ke;if(s.call(i,e))return a(t.get(e));if(s.call(i,o))return a(t.get(o));t!==i&&t.get(e)}function Kt(t,e=!1){let r=this.__v_raw,n=h(r),i=h(t);return t!==i&&!e&&M(n,"has",t),!e&&M(n,"has",i),t===i?r.has(t):r.has(t)||r.has(i)}function Wt(t,e=!1){return t=t.__v_raw,!e&&M(h(t),"iterate",Q),Reflect.get(t,"size",t)}function an(t){t=h(t);let e=h(this);return Yt(e).has.call(e,t)||(e.add(t),K(e,"add",t,t)),this}function cn(t,e){e=h(e);let r=h(this),{has:n,get:i}=Yt(r),o=n.call(r,t);o?xn(r,n,t):(t=h(t),o=n.call(r,t));let s=i.call(r,t);return r.set(t,e),o?Re(e,s)&&K(r,"set",t,e,s):K(r,"add",t,e),this}function ln(t){let e=h(this),{has:r,get:n}=Yt(e),i=r.call(e,t);i?xn(e,r,t):(t=h(t),i=r.call(e,t));let o=n?n.call(e,t):void 0,s=e.delete(t);return i&&K(e,"delete",t,void 0,o),s}function un(){let t=h(this),e=t.size!==0,r=at(t)?new Map(t):new Set(t),n=t.clear();return e&&K(t,"clear",void 0,void 0,r),n}function Gt(t,e){return function(n,i){let o=this,s=o.__v_raw,a=h(s),c=e?Le:t?$e:ke;return!t&&M(a,"iterate",Q),s.forEach((l,u)=>n.call(i,c(l),c(u),o))}}function Jt(t,e,r){return function(...n){let i=this.__v_raw,o=h(i),s=at(o),a=t==="entries"||t===Symbol.iterator&&s,c=t==="keys"&&s,l=i[t](...n),u=r?Le:e?$e:ke;return!e&&M(o,"iterate",c?Pe:Q),{next(){let{value:f,done:b}=l.next();return b?{value:f,done:b}:{value:a?[u(f[0]),u(f[1])]:u(f),done:b}},[Symbol.iterator](){return this}}}}function q(t){return function(...e){{let r=e[0]?`on key "${e[0]}" `:"";console.warn(`${Me(t)} operation ${r}failed: target is readonly.`,h(this))}return t==="delete"?!1:this}}function Li(){let t={get(o){return qt(this,o)},get size(){return Wt(this)},has:Kt,add:an,set:cn,delete:ln,clear:un,forEach:Gt(!1,!1)},e={get(o){return qt(this,o,!1,!0)},get size(){return Wt(this)},has:Kt,add:an,set:cn,delete:ln,clear:un,forEach:Gt(!1,!0)},r={get(o){return qt(this,o,!0)},get size(){return Wt(this,!0)},has(o){return Kt.call(this,o,!0)},add:q("add"),set:q("set"),delete:q("delete"),clear:q("clear"),forEach:Gt(!0,!1)},n={get(o){return qt(this,o,!0,!0)},get size(){return Wt(this,!0)},has(o){return Kt.call(this,o,!0)},add:q("add"),set:q("set"),delete:q("delete"),clear:q("clear"),forEach:Gt(!0,!0)};return["keys","values","entries",Symbol.iterator].forEach(o=>{t[o]=Jt(o,!1,!1),r[o]=Jt(o,!0,!1),e[o]=Jt(o,!1,!0),n[o]=Jt(o,!0,!0)}),[t,r,e,n]}var[ji,Fi,Bi,zi]=Li();function gn(t,e){let r=e?t?zi:Bi:t?Fi:ji;return(n,i,o)=>i==="__v_isReactive"?!t:i==="__v_isReadonly"?t:i==="__v_raw"?n:Reflect.get(bt(r,i)&&i in n?r:n,i,o)}var Hi={get:gn(!1,!1)};var Vi={get:gn(!0,!1)};function xn(t,e,r){let n=h(r);if(n!==r&&e.call(t,n)){let i=Te(t);console.warn(`Reactive ${i} contains both the raw and reactive versions of the same object${i==="Map"?" as keys":""}, which can lead to inconsistencies. Avoid differentiating between the raw and reactive versions of an object and only use the reactive version if possible.`)}}var yn=new WeakMap,Ui=new WeakMap,bn=new WeakMap,qi=new WeakMap;function Ki(t){switch(t){case"Object":case"Array":return 1;case"Map":case"Set":case"WeakMap":case"WeakSet":return 2;default:return 0}}function Wi(t){return t.__v_skip||!Object.isExtensible(t)?0:Ki(Te(t))}function Xt(t){return t&&t.__v_isReadonly?t:En(t,!1,ki,Hi,yn)}function wn(t){return En(t,!0,$i,Vi,bn)}function En(t,e,r,n,i){if(!wt(t))return console.warn(`value cannot be made reactive: ${String(t)}`),t;if(t.__v_raw&&!(e&&t.__v_isReactive))return t;let o=i.get(t);if(o)return o;let s=Wi(t);if(s===0)return t;let a=new Proxy(t,s===2?n:r);return i.set(t,a),a}function h(t){return t&&h(t.__v_raw)||t}function De(t){return Boolean(t&&t.__v_isRef===!0)}x("nextTick",()=>st);x("dispatch",t=>J.bind(J,t));x("watch",(t,{evaluateLater:e,cleanup:r})=>(n,i)=>{let o=e(n),a=St(()=>{let c;return o(l=>c=l),c},i);r(a)});x("store",Yr);x("data",t=>Ct(t));x("root",t=>Y(t));x("refs",t=>(t._x_refs_proxy||(t._x_refs_proxy=P(Gi(t))),t._x_refs_proxy));function Gi(t){let e=[];return A(t,r=>{r._x_refs&&e.push(r._x_refs)}),e}var je={};function Fe(t){return je[t]||(je[t]=0),++je[t]}function Sn(t,e){return A(t,r=>{if(r._x_ids&&r._x_ids[e])return!0})}function vn(t,e){t._x_ids||(t._x_ids={}),t._x_ids[e]||(t._x_ids[e]=Fe(e))}x("id",(t,{cleanup:e})=>(r,n=null)=>{let i=`${r}${n?`-${n}`:""}`;return Ji(t,i,e,()=>{let o=Sn(t,r),s=o?o._x_ids[r]:Fe(r);return n?`${r}-${s}-${n}`:`${r}-${s}`})});V((t,e)=>{t._x_id&&(e._x_id=t._x_id)});function Ji(t,e,r,n){if(t._x_id||(t._x_id={}),t._x_id[e])return t._x_id[e];let i=n();return t._x_id[e]=i,r(()=>{delete t._x_id[e]}),i}x("el",t=>t);An("Focus","focus","focus");An("Persist","persist","persist");function An(t,e,r){x(e,n=>E(`You can't use [$${e}] without first installing the "${t}" plugin here: https://alpinejs.dev/plugins/${r}`,n))}p("modelable",(t,{expression:e},{effect:r,evaluateLater:n,cleanup:i})=>{let o=n(e),s=()=>{let u;return o(f=>u=f),u},a=n(`${e} = __placeholder`),c=u=>a(()=>{},{scope:{__placeholder:u}}),l=s();c(l),queueMicrotask(()=>{if(!t._x_model)return;t._x_removeModelListeners.default();let u=t._x_model.get,f=t._x_model.setWithModifiers,b=zt({get(){return u()},set(g){f(g)}},{get(){return s()},set(g){c(g)}});i(b)})});p("teleport",(t,{modifiers:e,expression:r},{cleanup:n})=>{t.tagName.toLowerCase()!=="template"&&E("x-teleport can only be used on a <template> tag",t);let i=On(r),o=t.content.cloneNode(!0).firstElementChild;t._x_teleport=o,o._x_teleportBack=t,t.setAttribute("data-teleport-template",!0),o.setAttribute("data-teleport-target",!0),t._x_forwardEvents&&t._x_forwardEvents.forEach(a=>{o.addEventListener(a,c=>{c.stopPropagation(),t.dispatchEvent(new c.constructor(c.type,c))})}),N(o,{},t);let s=(a,c,l)=>{l.includes("prepend")?c.parentNode.insertBefore(a,c):l.includes("append")?c.parentNode.insertBefore(a,c.nextSibling):c.appendChild(a)};m(()=>{s(o,i,e),v(()=>{S(o)})()}),t._x_teleportPutBack=()=>{let a=On(r);m(()=>{s(t._x_teleport,a,e)})},n(()=>m(()=>{o.remove(),I(o)}))});var Yi=document.createElement("div");function On(t){let e=v(()=>document.querySelector(t),()=>Yi)();return e||E(`Cannot find x-teleport element for selector: "${t}"`),e}var Cn=()=>{};Cn.inline=(t,{modifiers:e},{cleanup:r})=>{e.includes("self")?t._x_ignoreSelf=!0:t._x_ignore=!0,r(()=>{e.includes("self")?delete t._x_ignoreSelf:delete t._x_ignore})};p("ignore",Cn);p("effect",v((t,{expression:e},{effect:r})=>{r(_(t,e))}));function z(t,e,r,n){let i=t,o=c=>n(c),s={},a=(c,l)=>u=>l(c,u);return r.includes("dot")&&(e=Xi(e)),r.includes("camel")&&(e=Zi(e)),r.includes("capture")&&(s.capture=!0),r.includes("window")&&(i=window),r.includes("document")&&(i=document),r.includes("passive")&&(s.passive=r[r.indexOf("passive")+1]!=="false"),o=Be(r,o),r.includes("prevent")&&(o=a(o,(c,l)=>{l.preventDefault(),c(l)})),r.includes("stop")&&(o=a(o,(c,l)=>{l.stopPropagation(),c(l)})),r.includes("once")&&(o=a(o,(c,l)=>{c(l),i.removeEventListener(e,o,s)})),(r.includes("away")||r.includes("outside"))&&(i=document,o=a(o,(c,l)=>{t.contains(l.target)||l.target.isConnected!==!1&&(t.offsetWidth<1&&t.offsetHeight<1||t._x_isShown!==!1&&c(l))})),r.includes("self")&&(o=a(o,(c,l)=>{l.target===t&&c(l)})),e==="submit"&&(o=a(o,(c,l)=>{l.target._x_pendingModelUpdates&&l.target._x_pendingModelUpdates.forEach(u=>u()),c(l)})),(to(e)||Mn(e))&&(o=a(o,(c,l)=>{eo(l,r)||c(l)})),i.addEventListener(e,o,s),()=>{i.removeEventListener(e,o,s)}}function Be(t,e){if(t.includes("debounce")){let r=t[t.indexOf("debounce")+1]||"invalid-wait",n=Zt(r.split("ms")[0])?Number(r.split("ms")[0]):250;e=Ft(e,n)}if(t.includes("throttle")){let r=t[t.indexOf("throttle")+1]||"invalid-wait",n=Zt(r.split("ms")[0])?Number(r.split("ms")[0]):250;e=Bt(e,n)}return e}function Xi(t){return t.replace(/-/g,".")}function Zi(t){return t.toLowerCase().replace(/-(\w)/g,(e,r)=>r.toUpperCase())}function Zt(t){return!Array.isArray(t)&&!isNaN(t)}function Qi(t){return[" ","_"].includes(t)?t:t.replace(/([a-z])([A-Z])/g,"$1-$2").replace(/[_\s]/,"-").toLowerCase()}function to(t){return["keydown","keyup"].includes(t)}function Mn(t){return["contextmenu","click","mouse"].some(e=>t.includes(e))}function eo(t,e){let r=e.filter(o=>!["window","document","prevent","stop","once","capture","self","away","outside","passive","preserve-scroll","blur","change","lazy"].includes(o));if(r.includes("debounce")){let o=r.indexOf("debounce");r.splice(o,Zt((r[o+1]||"invalid-wait").split("ms")[0])?2:1)}if(r.includes("throttle")){let o=r.indexOf("throttle");r.splice(o,Zt((r[o+1]||"invalid-wait").split("ms")[0])?2:1)}if(r.length===0||r.length===1&&Tn(t.key).includes(r[0]))return!1;let i=["ctrl","shift","alt","meta","cmd","super"].filter(o=>r.includes(o));return r=r.filter(o=>!i.includes(o)),!(i.length>0&&i.filter(s=>((s==="cmd"||s==="super")&&(s="meta"),t[`${s}Key`])).length===i.length&&(Mn(t.type)||Tn(t.key).includes(r[0])))}function Tn(t){if(!t)return[];t=Qi(t);let e={ctrl:"control",slash:"/",space:" ",spacebar:" ",cmd:"meta",esc:"escape",up:"arrow-up",down:"arrow-down",left:"arrow-left",right:"arrow-right",period:".",comma:",",equal:"=",minus:"-",underscore:"_"};return e[t]=t,Object.keys(e).map(r=>{if(e[r]===t)return r}).filter(r=>r)}p("model",(t,{modifiers:e,expression:r},{effect:n,cleanup:i})=>{let o=t;e.includes("parent")&&(o=A(t,d=>d!==t));let s=_(o,r),a;typeof r=="string"?a=_(o,`${r} = __placeholder`):typeof r=="function"&&typeof r()=="string"?a=_(o,`${r()} = __placeholder`):a=()=>{};let c=()=>{let d;return s(y=>d=y),Rn(d)?d.get():d},l=d=>{let y;s(w=>y=w),Rn(y)?y.set(d):a(()=>{},{scope:{__placeholder:d}})};typeof r=="string"&&t.type==="radio"&&m(()=>{t.hasAttribute("name")||t.setAttribute("name",r)});let u=e.includes("change")||e.includes("lazy"),f=e.includes("blur"),b=e.includes("enter"),g=u||f||b,L;if(k)L=()=>{};else if(g){let d=[],y=w=>l(Qt(t,e,w,c()));if(u&&d.push(z(t,"change",e,y)),f&&(d.push(z(t,"blur",e,y)),t.form)){let w=t.form,tt=()=>y({target:t});w._x_pendingModelUpdates||(w._x_pendingModelUpdates=[]),w._x_pendingModelUpdates.push(tt),i(()=>{w._x_pendingModelUpdates&&w._x_pendingModelUpdates.splice(w._x_pendingModelUpdates.indexOf(tt),1)})}b&&d.push(z(t,"keydown",e,w=>{w.key==="Enter"&&y(w)})),L=()=>d.forEach(w=>w())}else{let d=t.tagName.toLowerCase()==="select"||["checkbox","radio"].includes(t.type)?"change":"input";L=z(t,d,e,y=>{l(Qt(t,e,y,c()))})}if(e.includes("fill")&&([void 0,null,""].includes(c())||yt(t)&&Array.isArray(c())||t.tagName.toLowerCase()==="select"&&t.multiple)&&l(Qt(t,e,{target:t},c())),t._x_removeModelListeners||(t._x_removeModelListeners={}),t._x_removeModelListeners.default=L,i(()=>t._x_removeModelListeners.default()),t.form){let d=z(t.form,"reset",[],y=>{st(()=>t._x_model&&t._x_model.set(Qt(t,e,{target:t},c())))});i(()=>d())}t._x_model={get(){return c()},set(d){l(d)},setWithModifiers:Be(e,l)},t._x_forceModelUpdate=d=>{d===void 0&&typeof r=="string"&&r.match(/\./)&&(d=""),m(()=>{yt(t)?Array.isArray(d)?t.checked=d.some(y=>y==t.value):t.checked=!!d:jt(t)?typeof d=="boolean"?t.checked=xt(t.value)===d:t.checked=t.value==d:gt(t,"value",d)})},n(()=>{let d=c();e.includes("unintrusive")&&document.activeElement.isSameNode(t)||t._x_forceModelUpdate(d)})});function Qt(t,e,r,n){return m(()=>{if(r instanceof CustomEvent&&r.detail!==void 0)return r.detail!==null&&r.detail!==void 0?r.detail:r.target.value;if(yt(t))if(Array.isArray(n)){let i=null;return e.includes("number")?i=ze(r.target.value):e.includes("boolean")?i=xt(r.target.value):i=r.target.value,r.target.checked?n.includes(i)?n:n.concat([i]):n.filter(o=>!ro(o,i))}else return r.target.checked;else{if(t.tagName.toLowerCase()==="select"&&t.multiple)return e.includes("number")?Array.from(r.target.selectedOptions).map(i=>{let o=i.value||i.text;return ze(o)}):e.includes("boolean")?Array.from(r.target.selectedOptions).map(i=>{let o=i.value||i.text;return xt(o)}):Array.from(r.target.selectedOptions).map(i=>i.value||i.text);{let i;return jt(t)?r.target.checked?i=r.target.value:i=n:i=r.target.value,e.includes("number")?ze(i):e.includes("boolean")?xt(i):e.includes("trim")?i.trim():i}}})}function ze(t){let e=t?parseFloat(t):null;return no(e)?e:t}function ro(t,e){return t==e}function no(t){return!Array.isArray(t)&&!isNaN(t)}function Rn(t){return t!==null&&typeof t=="object"&&typeof t.get=="function"&&typeof t.set=="function"}p("cloak",t=>queueMicrotask(()=>m(()=>t.removeAttribute(O("cloak")))));It(()=>`[${O("init")}]`);p("init",v((t,{expression:e},{evaluate:r})=>typeof e=="string"?!!e.trim()&&r(e,{},!1):r(e,{},!1)));p("text",(t,{expression:e},{effect:r,evaluateLater:n})=>{let i=n(e);r(()=>{i(o=>{m(()=>{t.textContent=o})})})});p("html",(t,{expression:e},{effect:r,evaluateLater:n})=>{let i=n(e);r(()=>{i(o=>{m(()=>{t.innerHTML=o??"",t._x_ignoreSelf=!0,S(t),delete t._x_ignoreSelf})})})});ot(Nt(":",Pt(O("bind:"))));var Nn=(t,{value:e,modifiers:r,expression:n,original:i},{effect:o,cleanup:s})=>{if(!e){let c={};Qr(c),_(t,n)(u=>{Oe(t,u,i)},{scope:c});return}if(e==="key")return io(t,n);if(t._x_inlineBindings&&t._x_inlineBindings[e]&&t._x_inlineBindings[e].extract)return;let a=_(t,n);o(()=>a(c=>{c===void 0&&typeof n=="string"&&n.match(/\./)&&(c=""),m(()=>gt(t,e,c,r))})),s(()=>{t._x_undoAddedClasses&&t._x_undoAddedClasses(),t._x_undoAddedStyles&&t._x_undoAddedStyles()})};Nn.inline=(t,{value:e,modifiers:r,expression:n})=>{e&&(t._x_inlineBindings||(t._x_inlineBindings={}),t._x_inlineBindings[e]={expression:n,extract:!1})};p("bind",Nn);function io(t,e){t._x_keyExpression=e}Dt(()=>`[${O("data")}]`);p("data",(t,{expression:e},{cleanup:r})=>{if(oo(t))return;e=e===""?"{}":e;let n={};H(n,t);let i={};rn(i,n);let o=T(t,e,{scope:i});(o===void 0||o===!0)&&(o={}),H(o,t);let s=C(o);rt(s);let a=N(t,s);s.init&&T(t,s.init),r(()=>{s.destroy&&T(t,s.destroy),a()})});V((t,e)=>{t._x_dataStack&&(e._x_dataStack=t._x_dataStack,e.setAttribute("data-has-alpine-state",!0))});function oo(t){return k?Lt?!0:t.hasAttribute("data-has-alpine-state"):!1}p("show",(t,{modifiers:e,expression:r},{effect:n})=>{let i=_(t,r);t._x_doHide||(t._x_doHide=()=>{m(()=>{t.style.setProperty("display","none",e.includes("important")?"important":void 0)})}),t._x_doShow||(t._x_doShow=()=>{m(()=>{t.style.length===1&&t.style.display==="none"?t.removeAttribute("style"):t.style.removeProperty("display")})});let o=()=>{t._x_doHide(),t._x_isShown=!1},s=()=>{t._x_doShow(),t._x_isShown=!0},a=()=>setTimeout(s),c=ht(f=>f?s():o(),f=>{typeof t._x_toggleAndCascadeWithTransitions=="function"?t._x_toggleAndCascadeWithTransitions(t,f,s,o):f?a():o()}),l,u=!0;n(()=>i(f=>{!u&&f===l||(e.includes("immediate")&&(f?a():o()),c(f),l=f,u=!1)}))});p("for",(t,{expression:e},{effect:r,cleanup:n})=>{let i=co(e),o=_(t,i.items),s=_(t,t._x_keyExpression||"index");t._x_lookup=new Map,r(()=>ao(t,i,o,s)),n(()=>{t._x_lookup.forEach(a=>m(()=>{I(a),a.remove()})),delete t._x_lookup})});function so(t){return e=>{Object.entries(e).forEach(([r,n])=>{t[r]=n})}}function ao(t,e,r,n){r(i=>{uo(i)&&(i=Array.from({length:i},(l,u)=>u+1)),i===void 0&&(i=[]),i instanceof Set&&(i=Array.from(i)),i instanceof Map&&(i=Array.from(i));let o=t._x_lookup,s=new Map;t._x_lookup=s;let a=fo(i),c=Object.entries(i).map(([l,u])=>{a||(l=parseInt(l));let f=lo(e,u,l,i),b;return n(g=>{typeof g=="object"&&E("x-for key cannot be an object, it must be a string or an integer",t),o.has(g)&&(s.set(g,o.get(g)),o.delete(g)),b=g},{scope:{index:l,...f}}),[b,f]});m(()=>{o.forEach(f=>{I(f),f.remove()});let l=new Set,u=t;c.forEach(([f,b])=>{if(s.has(f)){let d=s.get(f);d._x_refreshXForScope(b),u.nextElementSibling!==d&&(u.nextElementSibling&&d.replaceWith(u.nextElementSibling),u.after(d)),u=d,d._x_currentIfEl&&(d.nextElementSibling!==d._x_currentIfEl&&u.after(d._x_currentIfEl),u=d._x_currentIfEl);return}t.content.children.length>1&&E("x-for templates require a single root element, additional elements will be ignored.",t);let g=document.importNode(t.content,!0).firstElementChild,L=C(b);N(g,L,t),g._x_refreshXForScope=so(L),s.set(f,g),l.add(g),u.after(g),u=g}),v(()=>l.forEach(f=>S(f)))()})})}function co(t){let e=/,([^,\}\]]*)(?:,([^,\}\]]*))?$/,r=/^\s*\(|\)\s*$/g,n=/([\s\S]*?)\s+(?:in|of)\s+([\s\S]*)/,i=t.match(n);if(!i)return;let o={};o.items=i[2].trim();let s=i[1].replace(r,"").trim(),a=s.match(e);return a?(o.item=s.replace(e,"").trim(),o.index=a[1].trim(),a[2]&&(o.collection=a[2].trim())):o.item=s,o}function lo(t,e,r,n){let i={};return/^\[.*\]$/.test(t.item)&&Array.isArray(e)?t.item.replace("[","").replace("]","").split(",").map(s=>s.trim()).forEach((s,a)=>{i[s]=e[a]}):/^\{.*\}$/.test(t.item)&&!Array.isArray(e)&&typeof e=="object"?t.item.replace("{","").replace("}","").split(",").map(s=>s.trim()).forEach(s=>{i[s]=e[s]}):i[t.item]=e,t.index&&(i[t.index]=r),t.collection&&(i[t.collection]=n),i}function uo(t){return!Array.isArray(t)&&!isNaN(t)}function fo(t){return typeof t=="object"&&!Array.isArray(t)}function Pn(){}Pn.inline=(t,{expression:e},{cleanup:r})=>{let n=Y(t);n&&(n._x_refs||(n._x_refs={}),n._x_refs[e]=t,r(()=>delete n._x_refs[e]))};p("ref",Pn);p("if",(t,{expression:e},{effect:r,cleanup:n})=>{t.tagName.toLowerCase()!=="template"&&E("x-if can only be used on a <template> tag",t);let i=_(t,e),o=()=>{if(t._x_currentIfEl)return t._x_currentIfEl;let a=t.content.cloneNode(!0).firstElementChild;return N(a,{},t),m(()=>{t.after(a),v(()=>S(a))()}),t._x_currentIfEl=a,t._x_undoIf=()=>{m(()=>{I(a),a.remove()}),delete t._x_currentIfEl},a},s=()=>{t._x_undoIf&&(t._x_undoIf(),delete t._x_undoIf)};r(()=>i(a=>{a?o():s()})),n(()=>t._x_undoIf&&t._x_undoIf())});p("id",(t,{expression:e},{evaluate:r})=>{r(e).forEach(i=>vn(t,i))});V((t,e)=>{t._x_ids&&(e._x_ids=t._x_ids)});ot(Nt("@",Pt(O("on:"))));p("on",v((t,{value:e,modifiers:r,expression:n},{cleanup:i})=>{let o=n?_(t,n):()=>{};t.tagName.toLowerCase()==="template"&&(t._x_forwardEvents||(t._x_forwardEvents=[]),t._x_forwardEvents.includes(e)||t._x_forwardEvents.push(e));let s=z(t,e,r,a=>{o(()=>{},{scope:{$event:a},params:[a]})});i(()=>s())}));te("Collapse","collapse","collapse");te("Intersect","intersect","intersect");te("Focus","trap","focus");te("Mask","mask","mask");function te(t,e,r){p(e,n=>E(`You can't use [x-${e}] without first installing the "${t}" plugin here: https://alpinejs.dev/plugins/${r}`,n))}B.setEvaluator(mr);B.setRawEvaluator(_r);B.setReactivityEngine({reactive:Xt,effect:fn,release:dn,raw:h});var He=B;window.Alpine=He;queueMicrotask(()=>{He.start()});})();
+</script>
+</html>
