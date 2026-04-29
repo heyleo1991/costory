@@ -2423,11 +2423,11 @@ textarea:focus {
         return;
       }
 
-      // 判断新剧情顺利生成否
+      // sum 不存在 - 重新触发
       if(!res_json?.sum && mark_auto_resend <= 3){
-        my_ai_chat_easy.rollbackLastChat();
         console.log('dev: whenStreamDone() - empty sum - res_json:');
         console.log(res_json);
+        my_alpine_app.unSendMsg();
         setTimeout(() => {
           console.log('auto - resend')
           my_alpine_app.sendMsg();
@@ -2441,7 +2441,6 @@ textarea:focus {
       const sum = res_json?.sum?.trim() || '';
       text_append += `${my_alpine_app.story_data.prompt_text_history ? '\n' : ''}\n---\n${prompt_text_user_submit}\n=> ${res_json?.sum?.trim()}`
       if (!sum) {
-        my_ai_chat_easy.rollbackLastChat();
         return;
       }
       if (res_json?.story_drive?.trim().length >= 10) {
@@ -2467,7 +2466,6 @@ textarea:focus {
     const whenStreamError = (error) => {
       console.log('dev: whenStreamError() - error:');
       console.log(error);
-      my_ai_chat_easy.rollbackLastChat();
       let err_msg = '';
       err_msg += error.status + ' ';
 
