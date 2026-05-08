@@ -860,6 +860,8 @@ Harry Potter - Dumbledore’s Casual Talk in the Headmaster’s Office
           //TODO: 逐级向上找含有 pre 元素的父元素，找到后获取 pre 元素的内容
           var pre = event.target.closest("[lang]").querySelector("pre");
           if (pre) {
+
+            localStorage.setItem('kk_app_lang', localStorage.getItem(STORAGE_KEY))
             
             const costory_text = pre.innerText.trim();
             localStorage.setItem("kk_current_costory_text_or_json", costory_text);

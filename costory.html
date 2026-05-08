@@ -1455,7 +1455,7 @@ ul.char-block strong{
 .bubble-row.is-self { justify-content: flex-end; }
 .bubble {
   padding: 10px 14px;
-  max-width: 85%;
+  max-width: 93%;
   border-radius: 27px;
   line-height: 1.5;
   font-size: 0.9375rem;
@@ -1495,6 +1495,18 @@ ul.char-block strong{
   background-color: var(--bg-elevated);
   border-top-left-radius: 15px;
   border-top-right-radius: 15px;
+}
+.composer .story-location {
+  position: sticky;
+  position: absolute;
+  top: 15px;
+  right: 60px;
+  text-align: center;
+  opacity: 0.1;
+  font-size: 42px;
+  font-weight: bold;
+  height: 70px;
+  pointer-events: none;
 }
 .composer-inner {
   position: relative;
@@ -1667,6 +1679,11 @@ textarea:focus {
   .panel-left-wrap.is-open .panel-inner,
   .panel-right-wrap.is-open .panel-inner {
     transform: translateX(0);
+  }
+
+  .composer .story-location{
+    font-size: 24px;
+    top: 25px;
   }
 }</style>
 </head>
@@ -1847,7 +1864,7 @@ textarea:focus {
                       <div style="color: var(--infor);">
                         <p style="color: var(--text);background-color: var(--infor);padding: 5px 10px; border-radius: 6px;">
                           <span lang="zh">🙂此等不合逻辑之行，AI不答应！此轮不计入历史剧情，重新互动试试</span>
-                          <span lang="en">🙂Unreasonable behavior, AI does not agree! This round is not counted in the history of the story, try again.</span>
+                          <span lang="en">🙂behave illogically, AI rejected your storyline! This round is not counted in the history of the story, try again.</span>
                         </p>
                         <span x-html="novel.sum_unreasonable"></span>
                       </div>
@@ -1881,8 +1898,8 @@ textarea:focus {
             </template>
 
             <!-- loading -->
-            <template x-if="chat_status.status_pending || chat_status.status_streaming">
-              <div style="height: 10px; padding-left: 5px;">
+            <div style="height: 8px; padding-left: 5px;">
+              <template x-if="chat_status.status_pending || chat_status.status_streaming">
                 <svg width="32" height="8" viewBox="0 0 120 30" xmlns="http://www.w3.org/2000/svg" fill="var(--accent)">
                   <circle cx="15" cy="15" r="15">
                     <animate attributeName="r" from="15" to="15" begin="0s" dur="0.8s" values="15;9;15" calcMode="linear"
@@ -1903,8 +1920,8 @@ textarea:focus {
                       repeatCount="indefinite" />
                   </circle>
                 </svg>
-              </div>
-            </template>
+              </template>
+            </div>
           </div>
 
           <footer class="composer">
@@ -1928,17 +1945,7 @@ textarea:focus {
               </div>
               <div style="position: relative;">
 
-                <div x-text="(story_data.prompt_text_story_location).split(/[，。、：,（]/)[0] || ''" style="position: sticky;
-                  position: absolute;
-                  top: 15px;
-                  right: 60px;
-                  text-align: center;
-                  opacity: 0.1;
-                  font-size: 42px;
-                  font-weight: bold;
-                  height: 70px;
-                  pointer-events: none;
-                "></div>
+                <div class="story-location" x-text="(story_data.prompt_text_story_location).split(/[，。、：,（]/)[0] || ''"></div>
                 
                 <textarea
                   class="textarea-lite"
@@ -2110,7 +2117,7 @@ textarea:focus {
     * 中文环境：隐藏所有 lang="en" 元素
     * 非中文环境：隐藏所有 lang="zh" 元素
     */
-    const app_lang = localStorage.getItem('kk_app_lang') || '';
+    let app_lang = localStorage.getItem('kk_app_lang') || '';
     console.log('dev: app_lang:', app_lang);
 
     function autoHideLangElements(str_lang) {
@@ -2153,7 +2160,9 @@ textarea:focus {
 
         // 4. 保存 app_lang 到 localStorage
         const save_lang = is_zh ? 'zh' : 'en';
+        app_lang = save_lang;
         localStorage.setItem('kk_app_lang', save_lang);
+        my_alpine_app.app_lang = save_lang;
         console.log('dev: autoHideLangElements() - save_lang:', save_lang);
       } catch (error) {
         // 异常捕获，避免页面报错
@@ -2215,6 +2224,8 @@ textarea:focus {
         match_str: "## 5",
         // 自定义处理函数：将列表文本解析为角色对话数组
         redata: (markdownText) => {
+
+          // return markdownText;
           // 1. 处理空值/空文本
           if (!markdownText || typeof markdownText !== 'string') {
             return [];
@@ -2226,7 +2237,7 @@ textarea:focus {
           // 3. 逐行解析
           return lines.map(line => {
             // 去除首尾空格和开头的 - 符号
-            const content = line.trim().replace(/\u003e/g, '>').replace(/\u003c/g, '<').replace(/^-\s*/, '');
+            const content = line.trim().replace(/\\u003e/g, '>').replace(/\\u003c/g, '<').replace(/^-\s*/, '');
 
             // 正则匹配：“@姓名 =>” 对话内容 格式
             const match = content.match(/@([^=]+)\s*=>\s*(.+)$/);
@@ -2470,8 +2481,8 @@ textarea:focus {
       err_msg += error.status + ' ';
 
       err_msg += my_alpine_app.app_lang === 'zh' ? 
-        '内置免费 api 服务已停，请配置您自己的大模型提供商。' : 
-        'Free built-in API suspended. Please configure your own LLM provider.'
+        '模型API 失败' : 
+        'MLL API failed'
       
       iToast.push(err_msg)
     }
@@ -2783,9 +2794,9 @@ Now, return the text according to the agreed template format:
 
         sendMsg() {
 
-          if(new Date().getMonth() + 1 !== 4) {
-            return;
-          }
+          // if(new Date().getMonth() + 1 !== 4) {
+          //   return;
+          // } 
 
           if(
             this.chat_form.name.trim() === '' ||
@@ -2871,7 +2882,9 @@ Now, return the text according to the agreed template format:
 
           my_ai_chat_easy.rollbackLastChat();
           const arr = this.story_data.prompt_text_history.split('---');
-          arr.pop();
+          if((arr[arr.length - 1] || '').indexOf(this.story_data.prompt_text_user_submit) >= 0) {
+            arr.pop();
+          }
           this.story_data.prompt_text_history = arr.join('---');
         },
         
